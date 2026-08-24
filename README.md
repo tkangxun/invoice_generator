@@ -43,7 +43,7 @@ Change these before real use. Production seed never creates these accounts.
    - `DATABASE_URL` = a **reference** to the Postgres service `DATABASE_URL` (`${{Postgres.DATABASE_URL}}`)
    - `SESSION_SECRET` = a random string of at least 32 characters
    - `ADMIN_EMAIL` / `ADMIN_PASSWORD` / `ADMIN_NAME` = the first admin account (used when you seed)
-5. Confirm **Settings → Deploy → Pre-deploy Command** is `npx prisma migrate deploy` (also set in `railway.json`).
+5. Leave **Settings → Deploy → Pre-deploy Command** empty. Migrations run when the app starts (`npm start`).
 6. **Settings → Networking → Generate Domain**.
 7. After the first successful deploy, create the admin and price list once:
 

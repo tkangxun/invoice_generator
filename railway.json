@@ -4,8 +4,7 @@
     "builder": "RAILPACK"
   },
   "deploy": {
-    "startCommand": "npx next start --hostname 0.0.0.0",
-    "preDeployCommand": "npx prisma migrate deploy",
+    "startCommand": "npm start",
     "healthcheckPath": "/api/health",
     "restartPolicyType": "ON_FAILURE"
   }
