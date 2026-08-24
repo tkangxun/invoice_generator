@@ -1,0 +1,102 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String    @id @default(cuid())
+  email        String    @unique
+  name         String
+  passwordHash String
+  role         String    @default("SALES") // SALES | ADMIN
+  active       Boolean   @default(true)
+  createdAt    DateTime  @default(now())
+  invoices     Invoice[]
+  receipts     Receipt[]
+}
+
+model Item {
+  id          String        @id @default(cuid())
+  sku         String?       @unique
+  name        String
+  description String?
+  // Prices stored in cents to avoid floating-point errors
+  priceCents  Int
+  // "service" | "supplement" | "package"
+  type        String        @default("service")
+  // Comma-separated shorthand names, e.g. "hbot, hyperbaric"
+  aliases     String?
+  // For packages: human-readable list of what's included
+  includes    String?
+  active      Boolean       @default(true)
+  createdAt   DateTime      @default(now())
+  lines       InvoiceLine[]
+}
+
+// Sequential document numbering, keyed per document type and year (e.g. "INV-2026")
+model Counter {
+  id    String @id
+  value Int    @default(0)
+}
+
+model Invoice {
+  id              String        @id @default(cuid())
+  number          String        @unique
+  status          String        @default("UNPAID") // UNPAID | PARTIAL | PAID | VOIDED
+  customerName    String
+  customerAddress String?
+  customerPhone   String?
+  customerEmail   String?
+  notes           String?
+  subtotalCents   Int
+  discountCents   Int           @default(0)
+  taxRate         Float         @default(0) // percentage, e.g. 9 = 9% (unused for now; company is not GST-registered on samples)
+  taxCents        Int           @default(0)
+  totalCents      Int
+  issuedAt        DateTime      @default(now())
+  dueAt           DateTime?
+  voidReason      String?
+  voidedAt        DateTime?
+  createdBy       User          @relation(fields: [userId], references: [id])
+  userId          String
+  lines           InvoiceLine[]
+  receipts        Receipt[]
+
+  @@index([userId, issuedAt])
+  @@index([status])
+}
+
+model InvoiceLine {
+  id             String  @id @default(cuid())
+  invoice        Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  invoiceId      String
+  item           Item?   @relation(fields: [itemId], references: [id])
+  itemId         String?
+  description    String
+  qty            Float
+  unitPriceCents Int
+  lineTotalCents Int
+  // For supplements: bottles collected now. Remainder is stored as credit.
+  // Null means fully collected (default), including older invoices.
+  collectedQty   Float?
+}
+
+model Receipt {
+  id            String   @id @default(cuid())
+  number        String   @unique
+  invoice       Invoice  @relation(fields: [invoiceId], references: [id])
+  invoiceId     String
+  paymentMethod String
+  amountCents   Int
+  notes         String?
+  paidAt        DateTime @default(now())
+  recordedBy    User     @relation(fields: [userId], references: [id])
+  userId        String
+
+  @@index([paidAt])
+  @@index([invoiceId])
+}
