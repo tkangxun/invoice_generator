@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
+import defaultItems from "../prisma/default-price-list.json" with { type: "json" };
 
 const port = process.env.PORT || "3000";
 process.env.HOSTNAME = "0.0.0.0";
@@ -48,27 +49,32 @@ function run(command, args) {
   });
 }
 
-async function ensureAdmin() {
+async function ensureDefaults() {
   const prisma = new PrismaClient();
   try {
-    if ((await prisma.user.count()) > 0) return;
-    const email = (process.env.ADMIN_EMAIL || "admin@example.com")
-      .trim()
-      .toLowerCase();
-    const password = process.env.ADMIN_PASSWORD || "admin123";
-    const name = process.env.ADMIN_NAME?.trim() || "Admin";
-    if (password.length < 6) {
-      throw new Error("ADMIN_PASSWORD must be at least 6 characters.");
+    if ((await prisma.user.count()) === 0) {
+      const email = (process.env.ADMIN_EMAIL || "admin@example.com")
+        .trim()
+        .toLowerCase();
+      const password = process.env.ADMIN_PASSWORD || "admin123";
+      const name = process.env.ADMIN_NAME?.trim() || "Admin";
+      if (password.length < 6) {
+        throw new Error("ADMIN_PASSWORD must be at least 6 characters.");
+      }
+      await prisma.user.create({
+        data: {
+          email,
+          name,
+          role: "ADMIN",
+          passwordHash: await bcrypt.hash(password, 10),
+        },
+      });
+      console.log(`Created default admin ${email}`);
     }
-    await prisma.user.create({
-      data: {
-        email,
-        name,
-        role: "ADMIN",
-        passwordHash: await bcrypt.hash(password, 10),
-      },
-    });
-    console.log(`Created default admin ${email}`);
+    if ((await prisma.item.count()) === 0) {
+      await prisma.item.createMany({ data: defaultItems });
+      console.log(`Created default price list (${defaultItems.length} items)`);
+    }
   } finally {
     await prisma.$disconnect();
   }
@@ -78,7 +84,7 @@ console.log(
   `Migrating database at ${dbHost || "unknown-host"}, then starting Next.js on 0.0.0.0:${port}`
 );
 await run("npx", ["prisma", "migrate", "deploy"]);
-await ensureAdmin();
+await ensureDefaults();
 const server = spawn(
   "npx",
   ["next", "start", "--hostname", "0.0.0.0", "--port", port],
