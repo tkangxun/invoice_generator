@@ -2,6 +2,23 @@ import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
 import defaultItems from "./default-price-list.json";
 
+const COMPANY_DEFAULTS = {
+  brand: "Alpha Vitality",
+  tagline: "Personalised Health Optimisation",
+  legalName: "Alpha Sales & Marketing",
+  uen: "202528313D",
+  address: "1557 Keppel Road, #01-01, Singapore\n089066",
+  paymentTerms: "Due on receipt",
+};
+
+const DEFAULT_PAYMENT_METHODS = [
+  "Cash",
+  "PayNow",
+  "Bank Transfer",
+  "Credit Card",
+  "Cheque",
+];
+
 const prisma = new PrismaClient();
 
 async function main() {
@@ -67,8 +84,25 @@ async function main() {
     await prisma.item.create({ data: item });
   }
 
+  if ((await prisma.companySettings.count()) === 0) {
+    await prisma.companySettings.create({
+      data: {
+        name: COMPANY_DEFAULTS.brand,
+        active: true,
+        ...COMPANY_DEFAULTS,
+      },
+    });
+  }
+  await prisma.paymentMethod.createMany({
+    data: DEFAULT_PAYMENT_METHODS.map((name, sortOrder) => ({
+      name,
+      sortOrder,
+    })),
+    skipDuplicates: true,
+  });
+
   console.log(
-    `Seed complete: ${users.length} users, ${defaultItems.length} items.`
+    `Seed complete: ${users.length} users, ${defaultItems.length} items, invoice settings.`
   );
 }
 

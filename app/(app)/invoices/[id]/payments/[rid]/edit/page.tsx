@@ -6,6 +6,7 @@ import { paidCents } from "@/lib/payments";
 import { isFollowUpInvoiceNumber, isReceiptNumber } from "@/lib/docs";
 import { PaymentEditForm } from "@/components/PaymentEditForm";
 import { toDateInput } from "@/lib/money";
+import { getActivePaymentMethods } from "@/lib/payment-methods";
 
 export default async function EditPaymentPage({
   params,
@@ -33,6 +34,7 @@ export default async function EditPaymentPage({
 
   const othersPaid = paidCents(invoice.receipts.filter((r) => r.id !== payment.id));
   const maxAmount = invoice.totalCents - othersPaid;
+  const methods = await getActivePaymentMethods();
 
   return (
     <div>
@@ -54,6 +56,7 @@ export default async function EditPaymentPage({
             paidAt: toDateInput(payment.paidAt),
           }}
           maxAmount={maxAmount}
+          methods={methods}
         />
       </div>
     </div>

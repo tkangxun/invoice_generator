@@ -8,6 +8,8 @@ import {
   receiptsExportFilename,
   receiptsPaidAtWhere,
 } from "@/lib/sales-period";
+import { invoiceProfileWhere, parseInvoiceProfile } from "@/lib/invoice-list";
+import { listCompanyProfiles } from "@/lib/company";
 
 function formatItemsSold(
   lines: { description: string; qty: number }[]
@@ -40,10 +42,17 @@ export async function GET(request: Request) {
     url.searchParams.get("sales") ?? undefined,
     url.searchParams.get("period") ?? undefined
   );
+  const profiles = await listCompanyProfiles();
+  const profile = parseInvoiceProfile(
+    url.searchParams.get("profile") ?? undefined,
+    profiles
+  );
+  const profileWhere = invoiceProfileWhere(profile);
 
   const receipts = await prisma.receipt.findMany({
     where: {
       number: { startsWith: "RCP-" },
+      ...(profileWhere ? { invoice: profileWhere } : {}),
       ...receiptsPaidAtWhere(scope),
     },
     orderBy: { paidAt: "desc" },

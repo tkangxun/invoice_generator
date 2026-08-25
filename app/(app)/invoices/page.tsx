@@ -8,11 +8,13 @@ import {
   INVOICE_STATUS_FILTERS,
   invoiceIssuedAtWhere,
   invoiceListHref,
+  invoiceProfileWhere,
   invoiceSearchWhere,
   invoiceStatusWhere,
   matchesInvoiceQuery,
   parseInvoiceDir,
   parseInvoiceMonth,
+  parseInvoiceProfile,
   parseInvoiceSort,
   parseInvoiceStatus,
   sortInvoices,
@@ -21,6 +23,8 @@ import {
 import { recentTwoMonthsLabel } from "@/lib/sales-period";
 import { VOID_REASONS, parseVoidReason } from "@/lib/void-reasons";
 import { InvoiceListTable } from "@/components/InvoiceListTable";
+import { ProfileFilterBar } from "@/components/ProfileFilterBar";
+import { listCompanyProfiles } from "@/lib/company";
 
 export default async function InvoicesPage({
   searchParams,
@@ -31,6 +35,7 @@ export default async function InvoicesPage({
     month?: string;
     salesperson?: string;
     voidReason?: string;
+    profile?: string;
     sort?: string;
     dir?: string;
   }>;
@@ -43,6 +48,7 @@ export default async function InvoicesPage({
     month: monthParam,
     salesperson: salespersonParam,
     voidReason: voidReasonParam,
+    profile: profileParam,
     sort: sortParam,
     dir: dirParam,
   } = await searchParams;
@@ -61,6 +67,12 @@ export default async function InvoicesPage({
     status: statusFilter,
   });
 
+  const profiles = isAdmin ? await listCompanyProfiles() : [];
+  const profile = isAdmin
+    ? parseInvoiceProfile(profileParam, profiles)
+    : "";
+  const profileWhere = invoiceProfileWhere(profile);
+
   const where: Prisma.InvoiceWhereInput = {
     ...(isAdmin
       ? salesperson
@@ -70,6 +82,7 @@ export default async function InvoicesPage({
     ...(voidReason
       ? { status: "VOIDED", voidReason }
       : statusWhere ?? {}),
+    ...(profileWhere ?? {}),
   };
   const scoped = [
     invoiceIssuedAtWhere({ query, month, status: statusFilter }),
@@ -83,6 +96,7 @@ export default async function InvoicesPage({
       include: {
         createdBy: { select: { name: true } },
         receipts: { select: { number: true, amountCents: true } },
+        profile: { select: { name: true } },
       },
     }),
     isAdmin
@@ -124,6 +138,7 @@ export default async function InvoicesPage({
         month,
         salesperson,
         voidReason,
+        profile,
         sort: col.key,
         dir: active ? nextDir : "asc",
       }),
@@ -146,6 +161,7 @@ export default async function InvoicesPage({
                   month,
                   salesperson,
                   voidReason,
+                  profile,
                   sort,
                   dir,
                 })}
@@ -169,12 +185,33 @@ export default async function InvoicesPage({
         </Link>
       </div>
 
+      {isAdmin && (
+        <ProfileFilterBar
+          profiles={profiles}
+          profile={profile}
+          description="Show invoices created with a branding profile."
+          hrefFor={(next) =>
+            invoiceListHref({
+              status: statusFilter || undefined,
+              q: query,
+              month,
+              salesperson,
+              voidReason,
+              profile: next,
+              sort,
+              dir,
+            })
+          }
+        />
+      )}
+
       <form
         action="/invoices"
-        className="mt-6 flex flex-wrap items-end gap-3"
+        className="mt-4 flex flex-wrap items-end gap-3"
       >
         {sort !== "date" && <input type="hidden" name="sort" value={sort} />}
         {dir !== "desc" && <input type="hidden" name="dir" value={dir} />}
+        {profile && <input type="hidden" name="profile" value={profile} />}
         <label className="min-w-[16rem] flex-1 text-sm font-medium text-gray-700">
           Search
           <input
@@ -248,7 +285,7 @@ export default async function InvoicesPage({
         >
           Apply
         </button>
-        {(query || month || statusFilter || salesperson || voidReason) && (
+        {(query || month || statusFilter || salesperson || voidReason || profile) && (
           <Link
             href={invoiceListHref({ sort, dir })}
             className="px-2 py-2 text-sm text-blue-600 hover:underline"
@@ -261,7 +298,7 @@ export default async function InvoicesPage({
       <div className="mt-4 rounded-xl border border-gray-200 bg-white shadow-sm">
         {visible.length === 0 ? (
           <p className="px-5 py-10 text-center text-sm text-gray-500">
-            {query || month || statusFilter || salesperson || voidReason
+            {query || month || statusFilter || salesperson || voidReason || profile
               ? "No invoices match your filters."
               : recentWindow
                 ? `No invoices in ${recentTwoMonthsLabel()}.`

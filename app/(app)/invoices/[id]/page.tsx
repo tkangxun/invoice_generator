@@ -19,6 +19,9 @@ import {
   supplementCollectionNote,
   supplementCreditSummary,
 } from "@/lib/supplements";
+import { getActivePaymentMethods } from "@/lib/payment-methods";
+import { invoiceProfileLabel } from "@/lib/company";
+import { invoiceListHref } from "@/lib/invoice-list";
 
 export default async function InvoiceDetailPage({
   params,
@@ -34,6 +37,7 @@ export default async function InvoiceDetailPage({
       lines: { include: { item: { select: { type: true } } } },
       receipts: { orderBy: { paidAt: "asc" } },
       createdBy: { select: { name: true } },
+      profile: { select: { id: true, name: true } },
     },
   });
   if (!invoice) notFound();
@@ -41,7 +45,7 @@ export default async function InvoiceDetailPage({
 
   const visibleTo =
     user.role === "ADMIN" ? {} : { userId: user.userId };
-  const [previousInvoice, nextInvoice] = await Promise.all([
+  const [previousInvoice, nextInvoice, paymentMethods] = await Promise.all([
     prisma.invoice.findFirst({
       where: { ...visibleTo, number: { lt: invoice.number } },
       orderBy: { number: "desc" },
@@ -52,6 +56,7 @@ export default async function InvoiceDetailPage({
       orderBy: { number: "asc" },
       select: { id: true, number: true },
     }),
+    getActivePaymentMethods(),
   ]);
 
   const paid = paidCents(invoice.receipts);
@@ -105,6 +110,21 @@ export default async function InvoiceDetailPage({
             {invoice.dueAt
               ? formatDateShort(invoice.dueAt)
               : "upon receipt"}
+          </p>
+          <p className="mt-1 text-sm text-gray-500">
+            Profile{" "}
+            {user.role === "ADMIN" && invoice.profileId ? (
+              <Link
+                href={invoiceListHref({ profile: invoice.profileId })}
+                className="font-medium text-blue-700 hover:underline"
+              >
+                {invoiceProfileLabel(invoice)}
+              </Link>
+            ) : (
+              <span className="font-medium text-gray-700">
+                {invoiceProfileLabel(invoice)}
+              </span>
+            )}
           </p>
           {invoice.status === "VOIDED" && invoice.voidReason && (
             <p className="mt-2 text-sm text-red-800">
@@ -255,7 +275,11 @@ export default async function InvoiceDetailPage({
 
         <div className="space-y-4">
           {due > 0 && invoice.status !== "VOIDED" && (
-            <RecordPaymentForm invoiceId={invoice.id} dueCents={due} />
+            <RecordPaymentForm
+              invoiceId={invoice.id}
+              dueCents={due}
+              methods={paymentMethods}
+            />
           )}
 
           {paymentDocs.length > 0 && (

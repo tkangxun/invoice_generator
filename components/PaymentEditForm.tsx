@@ -17,6 +17,7 @@ const METHODS = [
 export function PaymentEditForm({
   payment,
   maxAmount,
+  methods,
 }: {
   payment: {
     id: string;
@@ -27,9 +28,14 @@ export function PaymentEditForm({
     paidAt: string;
   };
   maxAmount: number;
+  methods: string[];
 }) {
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  const baseMethods = methods.length > 0 ? methods : METHODS;
+  const methodOptions = baseMethods.includes(payment.paymentMethod)
+    ? baseMethods
+    : [payment.paymentMethod, ...baseMethods];
 
   function submit(formData: FormData) {
     setError(null);
@@ -72,7 +78,7 @@ export function PaymentEditForm({
           defaultValue={payment.paymentMethod}
           className={inputCls}
         >
-          {METHODS.map((m) => (
+          {methodOptions.map((m) => (
             <option key={m}>{m}</option>
           ))}
         </select>

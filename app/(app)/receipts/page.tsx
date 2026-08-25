@@ -4,6 +4,12 @@ import { requireUser } from "@/lib/session";
 import { formatCents, formatDateShort } from "@/lib/money";
 import { deleteReceipt } from "@/lib/actions/admin";
 import { ConfirmSubmitButton } from "@/components/ConfirmSubmitButton";
+import { ProfileFilterBar } from "@/components/ProfileFilterBar";
+import { listCompanyProfiles } from "@/lib/company";
+import {
+  invoiceProfileWhere,
+  parseInvoiceProfile,
+} from "@/lib/invoice-list";
 import {
   currentSalesPeriod,
   parseReceiptsListScope,
@@ -18,11 +24,11 @@ import {
 export default async function ReceiptsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ sales?: string; period?: string }>;
+  searchParams: Promise<{ sales?: string; period?: string; profile?: string }>;
 }) {
   const user = await requireUser();
   const isAdmin = user.role === "ADMIN";
-  const { sales, period: periodParam } = await searchParams;
+  const { sales, period: periodParam, profile: profileParam } = await searchParams;
   const scope = parseReceiptsListScope(sales, periodParam);
   const monthPeriod =
     scope.kind === "period" && scope.mode === "month"
@@ -36,10 +42,19 @@ export default async function ReceiptsPage({
       ? scope.period
       : currentSalesPeriod("year");
 
+  const profiles = isAdmin ? await listCompanyProfiles() : [];
+  const profile = isAdmin
+    ? parseInvoiceProfile(profileParam, profiles)
+    : "";
+  const profileWhere = invoiceProfileWhere(profile);
+
   const receipts = await prisma.receipt.findMany({
     where: {
       number: { startsWith: "RCP-" },
-      ...(isAdmin ? {} : { invoice: { userId: user.userId } }),
+      invoice: {
+        ...(isAdmin ? {} : { userId: user.userId }),
+        ...(profileWhere ?? {}),
+      },
       ...receiptsPaidAtWhere(scope),
     },
     orderBy: { paidAt: "desc" },
@@ -74,25 +89,31 @@ export default async function ReceiptsPage({
         <div className="flex flex-wrap items-end gap-3">
           <div className="flex overflow-hidden rounded-lg border border-gray-200">
             <Link
-              href={receiptsListHref({ kind: "recent" })}
+              href={receiptsListHref({ kind: "recent" }, profile)}
               className={tabCls(scope.kind === "recent")}
             >
               Recent
             </Link>
             <Link
-              href={receiptsListHref({ mode: "month", period: monthPeriod, kind: "period" })}
+              href={receiptsListHref(
+                { mode: "month", period: monthPeriod, kind: "period" },
+                profile
+              )}
               className={tabCls(scope.kind === "period" && scope.mode === "month")}
             >
               Month
             </Link>
             <Link
-              href={receiptsListHref({ mode: "year", period: yearPeriod, kind: "period" })}
+              href={receiptsListHref(
+                { mode: "year", period: yearPeriod, kind: "period" },
+                profile
+              )}
               className={tabCls(scope.kind === "period" && scope.mode === "year")}
             >
               Year
             </Link>
             <Link
-              href={receiptsListHref({ kind: "all" })}
+              href={receiptsListHref({ kind: "all" }, profile)}
               className={tabCls(scope.kind === "all")}
             >
               All time
@@ -101,6 +122,7 @@ export default async function ReceiptsPage({
           {scope.kind === "period" && scope.mode === "month" && (
             <form action="/receipts" className="flex items-end gap-2">
               <input type="hidden" name="sales" value="month" />
+              {profile && <input type="hidden" name="profile" value={profile} />}
               <label className="text-sm font-medium text-gray-700">
                 Month
                 <input
@@ -122,6 +144,7 @@ export default async function ReceiptsPage({
           {scope.kind === "period" && scope.mode === "year" && (
             <form action="/receipts" className="flex items-end gap-2">
               <input type="hidden" name="sales" value="year" />
+              {profile && <input type="hidden" name="profile" value={profile} />}
               <label className="text-sm font-medium text-gray-700">
                 Year
                 <input
@@ -143,7 +166,7 @@ export default async function ReceiptsPage({
           )}
           {isAdmin && (
             <a
-              href={receiptsExportHref(scope)}
+              href={receiptsExportHref(scope, profile)}
               className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-semibold hover:bg-gray-50"
             >
               Export CSV
@@ -151,10 +174,22 @@ export default async function ReceiptsPage({
           )}
         </div>
       </div>
+
+      {isAdmin && (
+        <ProfileFilterBar
+          profiles={profiles}
+          profile={profile}
+          description="Show receipts for invoices created with a branding profile."
+          hrefFor={(next) => receiptsListHref(scope, next)}
+        />
+      )}
+
       <div className="mt-6 rounded-xl border border-gray-200 bg-white shadow-sm">
         {receipts.length === 0 ? (
           <p className="px-5 py-10 text-center text-sm text-gray-500">
-            {scope.kind === "all"
+            {profile
+              ? "No receipts match your filters."
+              : scope.kind === "all"
               ? "No receipts yet. A receipt is issued when an invoice is paid in full."
               : `No receipts in ${periodLabel}.`}
           </p>

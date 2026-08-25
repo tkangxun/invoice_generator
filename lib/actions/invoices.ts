@@ -10,6 +10,7 @@ import { paidCents, remainingCents, statusFromPaid } from "@/lib/payments";
 import { isFollowUpInvoiceNumber, isReceiptNumber } from "@/lib/docs";
 import { parseVoidReason } from "@/lib/void-reasons";
 import type { Prisma } from "@prisma/client";
+import { getActiveProfileStamp } from "@/lib/company";
 
 async function issueSettlementReceipt(
   tx: Prisma.TransactionClient,
@@ -58,6 +59,7 @@ export type CreateInvoiceInput = {
   discountCents: number;
   dueAt?: string; // yyyy-mm-dd
   userId?: string;
+  profileId?: string;
   lines: InvoiceLineInput[];
 };
 
@@ -78,6 +80,25 @@ async function resolveInvoiceOwnerId(
     return { error: "That user is disabled." };
   }
   return { userId: target.id };
+}
+
+async function resolveInvoiceProfile(
+  actor: { role: string },
+  requestedProfileId?: string
+): Promise<
+  | { profileId: string | null; profileName: string | null }
+  | { error: string }
+> {
+  const main = await getActiveProfileStamp();
+  if (actor.role !== "ADMIN") return main;
+  const requested = requestedProfileId?.trim();
+  if (!requested) return main;
+  const row = await prisma.companySettings.findUnique({
+    where: { id: requested },
+    select: { id: true, name: true },
+  });
+  if (!row) return { error: "Profile not found." };
+  return { profileId: row.id, profileName: row.name };
 }
 
 async function buildInvoiceLines(lines: InvoiceLineInput[]) {
@@ -142,6 +163,8 @@ export async function createInvoice(
   const totalCents = subtotalCents - discountCents;
   const owner = await resolveInvoiceOwnerId(user, input.userId);
   if ("error" in owner) return owner;
+  const profile = await resolveInvoiceProfile(user, input.profileId);
+  if ("error" in profile) return profile;
 
   const invoice = await prisma.$transaction(async (tx) => {
     const number = await nextDocNumber(tx, "INV");
@@ -158,6 +181,8 @@ export async function createInvoice(
         totalCents,
         dueAt: input.dueAt ? parseDateInput(input.dueAt) : null,
         userId: owner.userId,
+        profileId: profile.profileId,
+        profileName: profile.profileName,
         lines: { create: computedLines },
       },
     });

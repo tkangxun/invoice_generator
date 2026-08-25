@@ -169,22 +169,38 @@ export function receiptsPaidAtWhere(
   return { paidAt: { gte: range.start, lt: range.end } };
 }
 
-export function receiptsListHref(scope: ReceiptsListScope): string {
-  if (scope.kind === "recent") return "/receipts";
-  if (scope.kind === "all") return "/receipts?sales=all";
+function receiptsScopeParams(
+  scope: ReceiptsListScope,
+  profile?: string
+): URLSearchParams {
   const params = new URLSearchParams();
-  params.set("sales", scope.mode);
-  params.set("period", scope.period);
-  return `/receipts?${params}`;
+  if (scope.kind === "all") params.set("sales", "all");
+  if (scope.kind === "recent") params.set("sales", "recent");
+  if (scope.kind === "period") {
+    params.set("sales", scope.mode);
+    params.set("period", scope.period);
+  }
+  if (profile) params.set("profile", profile);
+  return params;
 }
 
-export function receiptsExportHref(scope: ReceiptsListScope): string {
-  if (scope.kind === "recent") return "/receipts/export?sales=recent";
-  if (scope.kind === "all") return "/receipts/export?sales=all";
-  const params = new URLSearchParams();
-  params.set("sales", scope.mode);
-  params.set("period", scope.period);
-  return `/receipts/export?${params}`;
+export function receiptsListHref(
+  scope: ReceiptsListScope,
+  profile?: string
+): string {
+  const params = receiptsScopeParams(scope, profile);
+  if (scope.kind === "recent") params.delete("sales");
+  const qs = params.toString();
+  return qs ? `/receipts?${qs}` : "/receipts";
+}
+
+export function receiptsExportHref(
+  scope: ReceiptsListScope,
+  profile?: string
+): string {
+  const params = receiptsScopeParams(scope, profile);
+  const qs = params.toString();
+  return qs ? `/receipts/export?${qs}` : "/receipts/export";
 }
 
 export function receiptsExportFilename(

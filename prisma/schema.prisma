@@ -63,11 +63,15 @@ model Invoice {
   voidedAt        DateTime?
   createdBy       User          @relation(fields: [userId], references: [id])
   userId          String
+  profile         CompanySettings? @relation(fields: [profileId], references: [id], onDelete: SetNull)
+  profileId       String?
+  profileName     String?
   lines           InvoiceLine[]
   receipts        Receipt[]
 
   @@index([userId, issuedAt])
   @@index([status])
+  @@index([profileId])
 }
 
 model InvoiceLine {
@@ -99,4 +103,31 @@ model Receipt {
 
   @@index([paidAt])
   @@index([invoiceId])
+}
+
+model CompanySettings {
+  id            String   @id @default(cuid())
+  name          String   @unique
+  active        Boolean  @default(false)
+  brand         String
+  tagline       String
+  legalName     String
+  uen           String
+  address       String
+  paymentTerms  String
+  logoMime      String?
+  logoBytes     Bytes?
+  paynowQrMime  String?
+  paynowQrBytes Bytes?
+  updatedAt     DateTime @updatedAt
+  invoices      Invoice[]
+
+  @@index([active])
+}
+
+model PaymentMethod {
+  id        String  @id @default(cuid())
+  name      String  @unique
+  active    Boolean @default(true)
+  sortOrder Int     @default(0)
 }

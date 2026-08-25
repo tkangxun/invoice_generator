@@ -75,6 +75,33 @@ async function ensureDefaults() {
       await prisma.item.createMany({ data: defaultItems });
       console.log(`Created default price list (${defaultItems.length} items)`);
     }
+    if ((await prisma.companySettings.count()) === 0) {
+      await prisma.companySettings.create({
+        data: {
+          name: "Alpha Vitality",
+          active: true,
+          brand: "Alpha Vitality",
+          tagline: "Personalised Health Optimisation",
+          legalName: "Alpha Sales & Marketing",
+          uen: "202528313D",
+          address: "1557 Keppel Road, #01-01, Singapore\n089066",
+          paymentTerms: "Due on receipt",
+        },
+      });
+      console.log("Created default invoice settings");
+    }
+    if ((await prisma.paymentMethod.count()) === 0) {
+      await prisma.paymentMethod.createMany({
+        data: [
+          { name: "Cash", sortOrder: 0 },
+          { name: "PayNow", sortOrder: 1 },
+          { name: "Bank Transfer", sortOrder: 2 },
+          { name: "Credit Card", sortOrder: 3 },
+          { name: "Cheque", sortOrder: 4 },
+        ],
+      });
+      console.log("Created default payment methods");
+    }
   } finally {
     await prisma.$disconnect();
   }

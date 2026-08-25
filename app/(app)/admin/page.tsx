@@ -13,6 +13,12 @@ export default async function AdminSettingsPage() {
 
   const cards = [
     {
+      href: "/admin/invoice-settings",
+      title: "Invoice",
+      body: "Branding profiles, logo, UEN, invoice preview, and payment methods.",
+      meta: "Printed invoices and receipts",
+    },
+    {
       href: "/admin/items",
       title: "Price list",
       body: "Add, edit, or disable items. Changes apply to new invoices only.",
@@ -38,7 +44,7 @@ export default async function AdminSettingsPage() {
       <p className="mt-1 text-sm text-gray-500">
         Admin-only. Sales accounts cannot see this page.
       </p>
-      <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
+      <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {cards.map((card) => (
           <Link
             key={card.href}

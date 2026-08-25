@@ -3,7 +3,7 @@ import { notFound, redirect } from "next/navigation";
 import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/session";
 import { formatCents, formatDate } from "@/lib/money";
-import { COMPANY } from "@/lib/company";
+import { getCompany } from "@/lib/company";
 import { PrintButton } from "@/components/PrintButton";
 import { isFollowUpInvoiceNumber, paymentRecords } from "@/lib/docs";
 import {
@@ -49,6 +49,7 @@ export default async function PrintFollowUpInvoicePage({
   const amountPaid = paymentsToDate.reduce((s, r) => s + r.amountCents, 0);
   const outstanding = Math.max(0, invoice.totalCents - amountPaid);
   const creditNotes = supplementCreditSummary(invoice.lines);
+  const company = await getCompany(invoice.profileId);
 
   return (
     <div className="min-h-screen bg-gray-100 py-8 print:bg-white print:py-0">
@@ -62,9 +63,15 @@ export default async function PrintFollowUpInvoicePage({
           style={{ borderColor: NAVY }}
         >
           <div>
-            <img src={COMPANY.logoSrc} alt={COMPANY.brand} className="h-14 w-auto" />
+            {company.logoSrc ? (
+              <img src={company.logoSrc} alt={company.brand} className="h-14 w-auto" />
+            ) : (
+              <div className="font-serif text-2xl font-bold" style={{ color: NAVY }}>
+                {company.brand}
+              </div>
+            )}
             <div className="mt-1 text-xs italic text-gray-500">
-              {COMPANY.tagline}
+              {company.tagline}
             </div>
           </div>
           <div className="text-right">
@@ -84,10 +91,10 @@ export default async function PrintFollowUpInvoicePage({
               From
             </div>
             <div className="mt-1 font-semibold" style={{ color: NAVY }}>
-              {COMPANY.legalName}
+              {company.legalName}
             </div>
-            <div className="text-gray-700">UEN: {COMPANY.uen}</div>
-            {COMPANY.addressLines.map((line) => (
+            <div className="text-gray-700">UEN: {company.uen}</div>
+            {company.addressLines.map((line) => (
               <div key={line} className="text-gray-700">
                 {line}
               </div>
@@ -238,25 +245,27 @@ export default async function PrintFollowUpInvoicePage({
               <div className="text-xs font-bold uppercase tracking-wide" style={{ color: NAVY }}>
                 Payment
               </div>
-              <div className="mt-2 font-semibold" style={{ color: NAVY }}>
-                PayNow to UEN
-              </div>
-              <div className="text-gray-700">{COMPANY.uen}</div>
-              <div className="text-gray-700">({COMPANY.legalName})</div>
-              <div className="mt-3 text-xs text-gray-600">
-                Terms: {COMPANY.paymentTerms}
-              </div>
+            <div className="mt-2 font-semibold" style={{ color: NAVY }}>
+              PayNow to UEN
             </div>
+            <div className="text-gray-700">{company.uen}</div>
+            <div className="text-gray-700">({company.legalName})</div>
+            <div className="mt-3 text-xs text-gray-600">
+              Terms: {company.paymentTerms}
+            </div>
+          </div>
+          {company.paynowQrSrc ? (
             <img
-              src={COMPANY.paynowQrSrc}
+              src={company.paynowQrSrc}
               alt="PayNow QR code"
               className="h-32 w-32 object-contain"
             />
+          ) : null}
           </div>
         )}
 
         <div className="mt-auto pt-10 text-center text-[10px] italic text-gray-500">
-          {COMPANY.footerLine}
+          {company.footerLine}
         </div>
       </div>
     </div>

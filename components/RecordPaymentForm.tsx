@@ -15,13 +15,16 @@ const METHODS = [
 export function RecordPaymentForm({
   invoiceId,
   dueCents,
+  methods,
 }: {
   invoiceId: string;
   dueCents: number;
+  methods: string[];
 }) {
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   const defaultAmount = (dueCents / 100).toFixed(2);
+  const methodOptions = methods.length > 0 ? methods : METHODS;
 
   function submit(formData: FormData) {
     setError(null);
@@ -74,7 +77,7 @@ export function RecordPaymentForm({
           name="paymentMethod"
           className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
         >
-          {METHODS.map((method) => (
+          {methodOptions.map((method) => (
             <option key={method}>{method}</option>
           ))}
         </select>
