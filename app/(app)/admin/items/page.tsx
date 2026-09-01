@@ -1,6 +1,15 @@
 import { prisma } from "@/lib/db";
 import { requireAdmin } from "@/lib/session";
-import { createItem, updateItem, toggleItemActive } from "@/lib/actions/admin";
+import {
+  createItem,
+  deleteItem,
+  moveItem,
+  updateItem,
+  toggleItemActive,
+} from "@/lib/actions/admin";
+import { PriceListCsvCard } from "@/components/PriceListCsvCard";
+import { ConfirmSubmitButton } from "@/components/ConfirmSubmitButton";
+import { ITEM_ORDER_BY } from "@/lib/item-order";
 
 const inputCls =
   "w-full rounded-lg border border-gray-300 px-2 py-1.5 text-sm focus:border-blue-500 focus:outline-none";
@@ -9,7 +18,8 @@ export default async function AdminItemsPage() {
   await requireAdmin();
 
   const items = await prisma.item.findMany({
-    orderBy: [{ active: "desc" }, { type: "asc" }, { name: "asc" }],
+    orderBy: ITEM_ORDER_BY,
+    include: { _count: { select: { lines: true } } },
   });
 
   return (
@@ -17,9 +27,13 @@ export default async function AdminItemsPage() {
       <h1 className="text-xl font-bold">Price List</h1>
       <p className="mt-1 text-sm text-gray-500">
         Changes apply to new invoices immediately. Existing invoices keep the
-        prices they were created with. Disabled items stay on old invoices but
-        can&apos;t be added to new ones.
+        prices they were created with. Use Up and Down to set the order of the
+        item dropdown on new invoices. Disable an item to hide it from new
+        invoices, or delete it to remove it from this list. Deleted items stay
+        on old invoices as copied line text.
       </p>
+
+      <PriceListCsvCard />
 
       <div className="mt-6 rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
         <h2 className="font-semibold">Add item</h2>
@@ -70,7 +84,7 @@ export default async function AdminItemsPage() {
       </div>
 
       <div className="mt-6 space-y-3">
-        {items.map((item) => (
+        {items.map((item, index) => (
           <div
             key={item.id}
             className={`rounded-xl border bg-white p-4 shadow-sm ${
@@ -79,6 +93,7 @@ export default async function AdminItemsPage() {
           >
             <div className="grid grid-cols-1 items-end gap-3 sm:grid-cols-12">
               <form
+                id={`item-${item.id}`}
                 action={updateItem.bind(null, item.id)}
                 className="contents"
               >
@@ -115,7 +130,7 @@ export default async function AdminItemsPage() {
                     <option value="package">Package</option>
                   </select>
                 </label>
-                <label className="block text-xs font-medium text-gray-500 sm:col-span-2">
+                <label className="block text-xs font-medium text-gray-500 sm:col-span-4">
                   Includes
                   <input
                     name="includes"
@@ -123,27 +138,62 @@ export default async function AdminItemsPage() {
                     className={`mt-1 ${inputCls}`}
                   />
                 </label>
-                <div className="sm:col-span-1">
+              </form>
+              <div className="flex flex-wrap gap-2 sm:col-span-12">
+                <form action={moveItem.bind(null, item.id, "up")}>
                   <button
                     type="submit"
-                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium hover:bg-gray-50"
+                    disabled={index === 0}
+                    aria-label={`Move ${item.name} up`}
+                    className="rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
                   >
-                    Save
+                    Up
                   </button>
-                </div>
-              </form>
-              <form action={toggleItemActive.bind(null, item.id)} className="sm:col-span-1">
+                </form>
+                <form action={moveItem.bind(null, item.id, "down")}>
+                  <button
+                    type="submit"
+                    disabled={index === items.length - 1}
+                    aria-label={`Move ${item.name} down`}
+                    className="rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    Down
+                  </button>
+                </form>
                 <button
                   type="submit"
-                  className={`w-full rounded-lg px-3 py-2 text-sm font-medium ${
-                    item.active
-                      ? "border border-red-200 text-red-600 hover:bg-red-50"
-                      : "border border-green-200 text-green-700 hover:bg-green-50"
-                  }`}
+                  form={`item-${item.id}`}
+                  className="rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium hover:bg-gray-50"
                 >
-                  {item.active ? "Disable" : "Enable"}
+                  Save
                 </button>
-              </form>
+                <form action={toggleItemActive.bind(null, item.id)}>
+                  <button
+                    type="submit"
+                    className={`rounded-lg px-3 py-2 text-sm font-medium ${
+                      item.active
+                        ? "border border-red-200 text-red-600 hover:bg-red-50"
+                        : "border border-green-200 text-green-700 hover:bg-green-50"
+                    }`}
+                  >
+                    {item.active ? "Disable" : "Enable"}
+                  </button>
+                </form>
+                <form action={deleteItem.bind(null, item.id)}>
+                  <ConfirmSubmitButton
+                    confirmMessage={
+                      item._count.lines > 0
+                        ? `Delete ${item.name}? It is on ${item._count.lines} invoice line${
+                            item._count.lines === 1 ? "" : "s"
+                          }. Those invoices keep their descriptions and prices. This cannot be undone.`
+                        : `Delete ${item.name} from the price list? This cannot be undone.`
+                    }
+                    className="rounded-lg border border-red-200 px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50"
+                  >
+                    Delete
+                  </ConfirmSubmitButton>
+                </form>
+              </div>
             </div>
             {!item.active && (
               <div className="mt-2 text-xs text-gray-500">

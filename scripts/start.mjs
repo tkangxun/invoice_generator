@@ -72,7 +72,9 @@ async function ensureDefaults() {
       console.log(`Created default admin ${email}`);
     }
     if ((await prisma.item.count()) === 0) {
-      await prisma.item.createMany({ data: defaultItems });
+      await prisma.item.createMany({
+        data: defaultItems.map((item, sortOrder) => ({ ...item, sortOrder })),
+      });
       console.log(`Created default price list (${defaultItems.length} items)`);
     }
     if ((await prisma.companySettings.count()) === 0) {

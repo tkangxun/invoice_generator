@@ -33,6 +33,7 @@ model Item {
   // For packages: human-readable list of what's included
   includes    String?
   active      Boolean       @default(true)
+  sortOrder   Int           @default(0)
   createdAt   DateTime      @default(now())
   lines       InvoiceLine[]
 }

@@ -80,8 +80,8 @@ async function main() {
 
   // Replace the whole price list (safe: line items keep their own description/price copies)
   await prisma.item.deleteMany();
-  for (const item of defaultItems) {
-    await prisma.item.create({ data: item });
+  for (const [sortOrder, item] of defaultItems.entries()) {
+    await prisma.item.create({ data: { ...item, sortOrder } });
   }
 
   if ((await prisma.companySettings.count()) === 0) {

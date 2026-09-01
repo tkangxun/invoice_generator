@@ -21,7 +21,7 @@ export default async function AdminSettingsPage() {
     {
       href: "/admin/items",
       title: "Price list",
-      body: "Add, edit, or disable items. Changes apply to new invoices only.",
+      body: "Add, edit, import, export, or delete items. Changes apply to new invoices only.",
       meta: `${itemCount} active items`,
     },
     {

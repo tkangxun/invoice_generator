@@ -4,6 +4,7 @@ import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/session";
 import { InvoiceForm } from "@/components/InvoiceForm";
 import { toDateInput } from "@/lib/money";
+import { ITEM_ORDER_BY } from "@/lib/item-order";
 
 export default async function EditInvoicePage({
   params,
@@ -33,7 +34,7 @@ export default async function EditInvoicePage({
           ...(lineItemIds.length ? [{ id: { in: lineItemIds } }] : []),
         ],
       },
-      orderBy: [{ type: "asc" }, { name: "asc" }],
+      orderBy: ITEM_ORDER_BY,
       select: {
         id: true,
         name: true,

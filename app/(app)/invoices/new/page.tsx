@@ -2,6 +2,7 @@ import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/session";
 import { InvoiceForm } from "@/components/InvoiceForm";
 import { getCompany, listCompanyProfiles } from "@/lib/company";
+import { ITEM_ORDER_BY } from "@/lib/item-order";
 
 export default async function NewInvoicePage() {
   const user = await requireUser();
@@ -9,7 +10,7 @@ export default async function NewInvoicePage() {
   const [items, salespeople, profiles, company] = await Promise.all([
     prisma.item.findMany({
       where: { active: true },
-      orderBy: [{ type: "asc" }, { name: "asc" }],
+      orderBy: ITEM_ORDER_BY,
       select: { id: true, name: true, priceCents: true, type: true, includes: true },
     }),
     isAdmin

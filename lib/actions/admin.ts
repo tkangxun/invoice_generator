@@ -9,6 +9,8 @@ import { dollarsToCents } from "@/lib/money";
 import { paidCents, statusFromPaid } from "@/lib/payments";
 import { isFollowUpInvoiceNumber, isReceiptNumber } from "@/lib/docs";
 import { COMPANY_DEFAULTS } from "@/lib/company";
+import { parsePriceListCsv } from "@/lib/price-list-csv";
+import { ITEM_ORDER_BY } from "@/lib/item-order";
 
 // ---------- Price list ----------
 
@@ -20,15 +22,21 @@ export async function createItem(formData: FormData) {
   const includes = String(formData.get("includes") ?? "").trim();
   if (!name || !price) return;
 
+  const last = await prisma.item.findFirst({
+    orderBy: { sortOrder: "desc" },
+    select: { sortOrder: true },
+  });
   await prisma.item.create({
     data: {
       name,
       priceCents: dollarsToCents(price),
       type,
       includes: includes || null,
+      sortOrder: (last?.sortOrder ?? -1) + 1,
     },
   });
   revalidatePath("/admin/items");
+  revalidatePath("/invoices/new");
 }
 
 export async function updateItem(itemId: string, formData: FormData) {
@@ -49,6 +57,7 @@ export async function updateItem(itemId: string, formData: FormData) {
     },
   });
   revalidatePath("/admin/items");
+  revalidatePath("/invoices/new");
 }
 
 export async function toggleItemActive(itemId: string) {
@@ -60,6 +69,207 @@ export async function toggleItemActive(itemId: string) {
     data: { active: !item.active },
   });
   revalidatePath("/admin/items");
+  revalidatePath("/invoices/new");
+}
+
+export async function deleteItem(itemId: string) {
+  await requireAdmin();
+  const item = await prisma.item.findUnique({ where: { id: itemId } });
+  if (!item) return;
+  await prisma.item.delete({ where: { id: itemId } });
+  revalidatePath("/admin/items");
+  revalidatePath("/invoices/new");
+}
+
+export async function moveItem(itemId: string, direction: "up" | "down") {
+  await requireAdmin();
+  const items = await prisma.item.findMany({
+    orderBy: ITEM_ORDER_BY,
+    select: { id: true },
+  });
+  const index = items.findIndex((item) => item.id === itemId);
+  const swapIndex = direction === "up" ? index - 1 : index + 1;
+  if (index < 0 || swapIndex < 0 || swapIndex >= items.length) return;
+
+  const ordered = [...items];
+  const [moved] = ordered.splice(index, 1);
+  ordered.splice(swapIndex, 0, moved);
+
+  await prisma.$transaction(
+    ordered.map((item, sortOrder) =>
+      prisma.item.update({ where: { id: item.id }, data: { sortOrder } })
+    )
+  );
+  revalidatePath("/admin/items");
+  revalidatePath("/invoices", "layout");
+}
+
+export type ImportPriceListState = {
+  error?: string;
+  created?: number;
+  updated?: number;
+  errors?: string[];
+};
+
+const MAX_PRICE_LIST_CSV_BYTES = 1_000_000;
+
+export async function importPriceList(
+  _prev: ImportPriceListState,
+  formData: FormData
+): Promise<ImportPriceListState> {
+  await requireAdmin();
+  const file = formData.get("file");
+  if (
+    !file ||
+    typeof file !== "object" ||
+    !("size" in file) ||
+    !("text" in file) ||
+    typeof file.size !== "number" ||
+    typeof file.text !== "function" ||
+    file.size === 0
+  ) {
+    return { error: "Choose a CSV file to import." };
+  }
+  if (file.size > MAX_PRICE_LIST_CSV_BYTES) {
+    return { error: "The CSV is too large (max 1 MB)." };
+  }
+
+  const parsed = parsePriceListCsv(await file.text());
+  if (parsed.errors.length) {
+    return { error: "The CSV could not be imported.", errors: parsed.errors };
+  }
+  if (parsed.rows.length === 0) {
+    return { error: "The CSV has no item rows." };
+  }
+
+  const existing = await prisma.item.findMany({
+    select: { id: true, sku: true },
+  });
+  const existingIds = new Set(existing.map((item) => item.id));
+  const byId = new Map(existing.map((item) => [item.id, item]));
+  const bySku = new Map(
+    existing
+      .filter((item) => item.sku)
+      .map((item) => [item.sku!.toLowerCase(), item])
+  );
+
+  const planned: Array<{
+    line: number;
+    mode: "create" | "update";
+    id?: string;
+  }> = [];
+  const matchErrors: string[] = [];
+
+  for (const { line, item } of parsed.rows) {
+    const fromId = item.id ? byId.get(item.id) : undefined;
+    const fromSku = item.sku ? bySku.get(item.sku.toLowerCase()) : undefined;
+    if (fromId && fromSku && fromId.id !== fromSku.id) {
+      matchErrors.push(
+        `Row ${line}: id and sku point to different items.`
+      );
+      continue;
+    }
+    const target = fromId ?? fromSku;
+    if (item.sku && target) {
+      const skuOwner = bySku.get(item.sku.toLowerCase());
+      if (skuOwner && skuOwner.id !== target.id) {
+        matchErrors.push(`Row ${line}: sku ${item.sku} is already in use.`);
+        continue;
+      }
+    }
+    if (target) {
+      planned.push({ line, mode: "update", id: target.id });
+    } else {
+      planned.push({ line, mode: "create", id: item.id ?? undefined });
+    }
+  }
+
+  if (matchErrors.length) {
+    return { error: "The CSV could not be imported.", errors: matchErrors };
+  }
+
+  let created = 0;
+  let updated = 0;
+  const columns = parsed.columns;
+  const importedExistingIds = planned
+    .filter((plan) => plan.mode === "update" && plan.id)
+    .map((plan) => plan.id!);
+  const isFullReorder =
+    existingIds.size > 0 &&
+    [...existingIds].every((id) => importedExistingIds.includes(id));
+
+  await prisma.$transaction(async (tx) => {
+    const last = await tx.item.findFirst({
+      orderBy: { sortOrder: "desc" },
+      select: { sortOrder: true },
+    });
+    let nextOrder = (last?.sortOrder ?? -1) + 1;
+    const appliedIds: string[] = [];
+
+    for (const [index, plan] of planned.entries()) {
+      const item = parsed.rows[index].item;
+      if (plan.mode === "update" && plan.id) {
+        await tx.item.update({
+          where: { id: plan.id },
+          data: {
+            name: item.name,
+            priceCents: item.priceCents,
+            ...(columns.has("type") ? { type: item.type } : {}),
+            ...(columns.has("includes") ? { includes: item.includes } : {}),
+            ...(columns.has("aliases") ? { aliases: item.aliases } : {}),
+            ...(columns.has("description")
+              ? { description: item.description }
+              : {}),
+            ...(columns.has("sku") ? { sku: item.sku } : {}),
+            ...(columns.has("active") ? { active: item.active } : {}),
+          },
+        });
+        appliedIds.push(plan.id);
+        updated += 1;
+      } else {
+        const createdItem = await tx.item.create({
+          data: {
+            ...(plan.id ? { id: plan.id } : {}),
+            name: item.name,
+            priceCents: item.priceCents,
+            type: item.type,
+            includes: item.includes,
+            aliases: item.aliases,
+            description: item.description,
+            sku: item.sku,
+            active: item.active,
+            sortOrder: isFullReorder ? index : nextOrder++,
+          },
+        });
+        appliedIds.push(createdItem.id);
+        created += 1;
+      }
+    }
+
+    if (isFullReorder) {
+      for (const [index, id] of appliedIds.entries()) {
+        await tx.item.update({
+          where: { id },
+          data: { sortOrder: index },
+        });
+      }
+      const rest = await tx.item.findMany({
+        where: { id: { notIn: appliedIds } },
+        orderBy: ITEM_ORDER_BY,
+        select: { id: true },
+      });
+      for (const [i, item] of rest.entries()) {
+        await tx.item.update({
+          where: { id: item.id },
+          data: { sortOrder: appliedIds.length + i },
+        });
+      }
+    }
+  });
+
+  revalidatePath("/admin/items");
+  revalidatePath("/invoices/new");
+  return { created, updated };
 }
 
 // ---------- Users ----------
