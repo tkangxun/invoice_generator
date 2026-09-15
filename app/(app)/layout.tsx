@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/session";
-import { logout } from "@/lib/actions/auth";
+import { logout, switchCompany } from "@/lib/actions/auth";
 import { AppNav } from "@/components/AppNav";
 
 export default async function AppLayout({
@@ -9,10 +9,13 @@ export default async function AppLayout({
   children: React.ReactNode;
 }) {
   const user = await requireUser();
-  const heldCount =
-    user.role === "ADMIN"
-      ? await prisma.companyMembership.count({ where: { userId: user.userId } })
-      : 1;
+  const held = await prisma.companyMembership.findMany({
+    where: { userId: user.userId },
+    orderBy: { company: { name: "asc" } },
+    select: {
+      company: { select: { id: true, name: true, code: true } },
+    },
+  });
 
   return (
     <div className="flex min-h-screen flex-col">
@@ -21,7 +24,9 @@ export default async function AppLayout({
         isAdmin={user.role === "ADMIN"}
         companyName={user.companyName}
         companyCode={user.companyCode}
-        canSwitchCompany={heldCount > 1}
+        currentCompanyId={user.companyId}
+        companies={held.map((row) => row.company)}
+        switchCompanyAction={switchCompany}
         logoutAction={logout}
       />
       <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-8">

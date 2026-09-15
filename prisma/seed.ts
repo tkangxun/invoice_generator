@@ -109,6 +109,41 @@ async function main() {
   }
 
   await prisma.item.deleteMany({ where: { companyId: company.id } });
+  if (
+    (await prisma.itemType.count({ where: { companyId: company.id } })) === 0
+  ) {
+    await prisma.itemType.createMany({
+      data: [
+        {
+          name: "Service",
+          slug: "service",
+          tracksCollection: false,
+          hasIncludes: false,
+          unitPlural: "sessions",
+          sortOrder: 0,
+          companyId: company.id,
+        },
+        {
+          name: "Supplement",
+          slug: "supplement",
+          tracksCollection: true,
+          hasIncludes: false,
+          unitPlural: "bottles",
+          sortOrder: 1,
+          companyId: company.id,
+        },
+        {
+          name: "Package",
+          slug: "package",
+          tracksCollection: false,
+          hasIncludes: true,
+          unitPlural: "sessions",
+          sortOrder: 2,
+          companyId: company.id,
+        },
+      ],
+    });
+  }
   for (const [sortOrder, item] of defaultItems.entries()) {
     await prisma.item.create({
       data: { ...item, sortOrder, companyId: company.id },

@@ -4,15 +4,34 @@ import bcrypt from "bcryptjs";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/db";
-import { requireAdmin, type AuthedUser } from "@/lib/session";
+import { getSession, requireAdmin, type AuthedUser } from "@/lib/session";
 import { dollarsToCents } from "@/lib/money";
 import { paidCents, statusFromPaid } from "@/lib/payments";
 import { isFollowUpInvoiceNumber, isReceiptNumber } from "@/lib/docs";
-import { COMPANY_DEFAULTS, uniqueCompanyName } from "@/lib/company";
+import { COMPANY_DEFAULTS, defaultPriceListData, uniqueCompanyName } from "@/lib/company";
 import { uniqueCompanyCode } from "@/lib/company-code";
 import { parsePriceListCsv } from "@/lib/price-list-csv";
 import { ITEM_ORDER_BY } from "@/lib/item-order";
 import { DEFAULT_PAYMENT_METHODS } from "@/lib/payment-methods";
+import {
+  defaultItemTypeData,
+  listItemTypes,
+  uniqueItemTypeName,
+  uniqueItemTypeSlug,
+} from "@/lib/item-types";
+
+async function resolveItemTypeSlug(companyId: string, requested: string) {
+  const types = await listItemTypes(companyId);
+  const key = requested.trim().toLowerCase();
+  if (!types.length) return "service";
+  if (!key) {
+    return types.find((type) => type.slug === "service")?.slug ?? types[0].slug;
+  }
+  const match = types.find(
+    (type) => type.slug === key || type.name.toLowerCase() === key
+  );
+  return match?.slug ?? null;
+}
 
 async function companyItem(admin: AuthedUser, itemId: string) {
   return prisma.item.findFirst({
@@ -32,9 +51,12 @@ export async function createItem(formData: FormData) {
   const admin = await requireAdmin();
   const name = String(formData.get("name") ?? "").trim();
   const price = String(formData.get("price") ?? "");
-  const type = String(formData.get("type") ?? "service");
+  const type = await resolveItemTypeSlug(
+    admin.companyId,
+    String(formData.get("type") ?? "")
+  );
   const includes = String(formData.get("includes") ?? "").trim();
-  if (!name || !price) return;
+  if (!name || !price || !type) return;
 
   const last = await prisma.item.findFirst({
     where: { companyId: admin.companyId },
@@ -60,9 +82,12 @@ export async function updateItem(itemId: string, formData: FormData) {
   if (!item) return;
   const name = String(formData.get("name") ?? "").trim();
   const price = String(formData.get("price") ?? "");
-  const type = String(formData.get("type") ?? "service");
+  const type = await resolveItemTypeSlug(
+    admin.companyId,
+    String(formData.get("type") ?? item.type)
+  );
   const includes = String(formData.get("includes") ?? "").trim();
-  if (!name || !price) return;
+  if (!name || !price || !type) return;
 
   await prisma.item.update({
     where: { id: itemId },
@@ -91,7 +116,13 @@ export async function deleteItem(itemId: string) {
   const admin = await requireAdmin();
   const item = await companyItem(admin, itemId);
   if (!item) return;
-  await prisma.item.delete({ where: { id: itemId } });
+  await prisma.$transaction(async (tx) => {
+    await tx.invoiceLine.updateMany({
+      where: { itemId },
+      data: { itemId: null },
+    });
+    await tx.item.delete({ where: { id: itemId } });
+  });
   revalidatePriceList();
 }
 
@@ -116,6 +147,83 @@ export async function moveItem(itemId: string, direction: "up" | "down") {
     )
   );
   revalidatePriceList();
+}
+
+function revalidateItemTypes() {
+  revalidatePriceList();
+}
+
+export async function createItemType(formData: FormData) {
+  const admin = await requireAdmin();
+  const name = String(formData.get("name") ?? "").trim();
+  if (!name) return;
+  const unitPlural =
+    String(formData.get("unitPlural") ?? "").trim() || "sessions";
+  const tracksCollection = formData.get("tracksCollection") === "on";
+  const hasIncludes = formData.get("hasIncludes") === "on";
+  const last = await prisma.itemType.findFirst({
+    where: { companyId: admin.companyId },
+    orderBy: { sortOrder: "desc" },
+    select: { sortOrder: true },
+  });
+  await prisma.itemType.create({
+    data: {
+      name: await uniqueItemTypeName(admin.companyId, name),
+      slug: await uniqueItemTypeSlug(admin.companyId, name),
+      unitPlural: unitPlural.slice(0, 40),
+      tracksCollection,
+      hasIncludes,
+      sortOrder: (last?.sortOrder ?? -1) + 1,
+      companyId: admin.companyId,
+    },
+  });
+  revalidateItemTypes();
+}
+
+export async function updateItemType(typeId: string, formData: FormData) {
+  const admin = await requireAdmin();
+  const current = await prisma.itemType.findFirst({
+    where: { id: typeId, companyId: admin.companyId },
+  });
+  if (!current) return;
+  const name = String(formData.get("name") ?? "").trim();
+  if (!name) return;
+  const unitPlural =
+    String(formData.get("unitPlural") ?? "").trim() || current.unitPlural;
+  await prisma.itemType.update({
+    where: { id: typeId },
+    data: {
+      name: await uniqueItemTypeName(admin.companyId, name, typeId),
+      unitPlural: unitPlural.slice(0, 40),
+      tracksCollection: formData.get("tracksCollection") === "on",
+      hasIncludes: formData.get("hasIncludes") === "on",
+    },
+  });
+  revalidateItemTypes();
+}
+
+export async function deleteItemType(typeId: string) {
+  const admin = await requireAdmin();
+  const current = await prisma.itemType.findFirst({
+    where: { id: typeId, companyId: admin.companyId },
+  });
+  if (!current) return;
+  const others = await prisma.itemType.findMany({
+    where: { companyId: admin.companyId, id: { not: typeId } },
+    orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+    select: { slug: true },
+  });
+  if (others.length === 0) {
+    redirect("/admin/items?typeError=last");
+  }
+  await prisma.$transaction(async (tx) => {
+    await tx.item.updateMany({
+      where: { companyId: admin.companyId, type: current.slug },
+      data: { type: others[0].slug },
+    });
+    await tx.itemType.delete({ where: { id: typeId } });
+  });
+  revalidateItemTypes();
 }
 
 export type ImportPriceListState = {
@@ -154,6 +262,28 @@ export async function importPriceList(
   }
   if (parsed.rows.length === 0) {
     return { error: "The CSV has no item rows." };
+  }
+
+  const catalog = await listItemTypes(admin.companyId);
+  const typeErrors: string[] = [];
+  const allowed = catalog.map((type) => type.name).join(", ") || "none";
+  for (const row of parsed.rows) {
+    const key = row.item.type.trim().toLowerCase();
+    const match = !key
+      ? (catalog.find((type) => type.slug === "service") ?? catalog[0])
+      : catalog.find(
+          (type) => type.slug === key || type.name.toLowerCase() === key
+        );
+    if (!match) {
+      typeErrors.push(
+        `Row ${row.line}: type must be one of this company's categories (${allowed}).`
+      );
+      continue;
+    }
+    row.item.type = match.slug;
+  }
+  if (typeErrors.length) {
+    return { error: "The CSV could not be imported.", errors: typeErrors };
   }
 
   const existing = await prisma.item.findMany({
@@ -494,11 +624,10 @@ export async function createCompany(
   formData: FormData
 ): Promise<CreateCompanyState> {
   const admin = await requireAdmin();
-  const requestedCode = String(formData.get("code") ?? "").trim();
   const requestedName = String(formData.get("name") ?? "").trim();
   const copyPriceList = formData.get("copyPriceList") === "on";
-  if (!requestedCode || !requestedName) {
-    return { error: "Company ID and name are required." };
+  if (!requestedName) {
+    return { error: "Company name is required." };
   }
 
   const current = await prisma.company.findUnique({
@@ -506,7 +635,7 @@ export async function createCompany(
   });
   if (!current) return { error: "Current company not found." };
 
-  const code = await uniqueCompanyCode(prisma, requestedCode);
+  const code = await uniqueCompanyCode(prisma, requestedName);
   const name = await uniqueCompanyName(requestedName);
   const created = await prisma.$transaction(async (tx) => {
     const company = await tx.company.create({
@@ -548,6 +677,23 @@ export async function createCompany(
       })),
     });
     if (copyPriceList) {
+      const types = await tx.itemType.findMany({
+        where: { companyId: admin.companyId },
+        orderBy: { sortOrder: "asc" },
+      });
+      await tx.itemType.createMany({
+        data: (types.length ? types : defaultItemTypeData(company.id)).map(
+          (type, sortOrder) => ({
+            name: type.name,
+            slug: type.slug,
+            tracksCollection: type.tracksCollection,
+            hasIncludes: type.hasIncludes,
+            unitPlural: type.unitPlural,
+            sortOrder: type.sortOrder ?? sortOrder,
+            companyId: company.id,
+          })
+        ),
+      });
       const items = await tx.item.findMany({
         where: { companyId: admin.companyId },
         orderBy: ITEM_ORDER_BY,
@@ -567,13 +713,91 @@ export async function createCompany(
             companyId: company.id,
           })),
         });
+      } else {
+        await tx.item.createMany({
+          data: defaultPriceListData(company.id),
+        });
       }
+    } else {
+      await tx.itemType.createMany({
+        data: defaultItemTypeData(company.id),
+      });
+      await tx.item.createMany({
+        data: defaultPriceListData(company.id),
+      });
     }
     return company;
   });
 
   revalidatePath("/admin/companies");
   redirect(`/admin/companies?created=${encodeURIComponent(created.code)}`);
+}
+
+export async function updateCompany(companyId: string, formData: FormData) {
+  const admin = await requireAdmin();
+  const membership = await prisma.companyMembership.findUnique({
+    where: { userId_companyId: { userId: admin.userId, companyId } },
+    select: { userId: true },
+  });
+  if (!membership) return;
+
+  const name = String(formData.get("name") ?? "").trim();
+  if (!name) return;
+
+  const uniqueName = await uniqueCompanyName(name, companyId);
+  await prisma.company.update({
+    where: { id: companyId },
+    data: {
+      name: uniqueName,
+      code: await uniqueCompanyCode(prisma, uniqueName, companyId),
+    },
+  });
+  revalidatePath("/admin/companies");
+  revalidatePath("/admin/invoice-settings");
+  revalidatePath("/", "layout");
+}
+
+export async function deleteCompany(companyId: string) {
+  const admin = await requireAdmin();
+  const membership = await prisma.companyMembership.findUnique({
+    where: { userId_companyId: { userId: admin.userId, companyId } },
+    select: { userId: true },
+  });
+  if (!membership) return;
+
+  const remainingCompanies = await prisma.company.count({
+    where: { id: { not: companyId } },
+  });
+  if (remainingCompanies === 0) {
+    redirect("/admin/companies?error=last-company");
+  }
+
+  const otherHeld = await prisma.companyMembership.findFirst({
+    where: { userId: admin.userId, companyId: { not: companyId } },
+    orderBy: { company: { name: "asc" } },
+    select: { companyId: true },
+  });
+  if (!otherHeld) {
+    redirect("/admin/companies?error=last-held");
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await tx.receipt.deleteMany({ where: { companyId } });
+    await tx.invoice.deleteMany({ where: { companyId } });
+    await tx.counter.deleteMany({
+      where: { id: { startsWith: `${companyId}:` } },
+    });
+    await tx.company.delete({ where: { id: companyId } });
+  });
+
+  if (admin.companyId === companyId) {
+    const session = await getSession();
+    session.companyId = otherHeld.companyId;
+    await session.save();
+  }
+
+  revalidatePath("/", "layout");
+  redirect("/admin/companies?deleted=1");
 }
 
 // ---------- Receipts ----------
@@ -639,8 +863,10 @@ async function readImage(formData: FormData, field: string) {
 
 function revalidateInvoiceSettings() {
   revalidatePath(SETTINGS_PATH);
+  revalidatePath("/admin/companies");
   revalidatePath("/invoices");
   revalidatePath("/print", "layout");
+  revalidatePath("/", "layout");
 }
 
 export async function updateCompanySettings(
@@ -648,15 +874,14 @@ export async function updateCompanySettings(
 ): Promise<{ error?: string } | void> {
   const admin = await requireAdmin();
   const name = String(formData.get("name") ?? "").trim();
-  const requestedCode = String(formData.get("code") ?? "").trim();
   const brand = String(formData.get("brand") ?? "").trim();
   const tagline = String(formData.get("tagline") ?? "").trim();
   const legalName = String(formData.get("legalName") ?? "").trim();
   const uen = String(formData.get("uen") ?? "").trim();
   const address = String(formData.get("address") ?? "").trim();
   const paymentTerms = String(formData.get("paymentTerms") ?? "").trim();
-  if (!name || !brand || !legalName || !uen || !requestedCode) {
-    return { error: "Company ID, name, brand, legal name, and UEN are required." };
+  if (!name || !brand || !legalName || !uen) {
+    return { error: "Name, brand, legal name, and UEN are required." };
   }
 
   let logo;
@@ -670,17 +895,12 @@ export async function updateCompanySettings(
     };
   }
 
-  const code = await uniqueCompanyCode(
-    prisma,
-    requestedCode || name,
-    admin.companyId
-  );
-
+  const uniqueName = await uniqueCompanyName(name, admin.companyId);
   await prisma.company.update({
     where: { id: admin.companyId },
     data: {
-      code,
-      name: await uniqueCompanyName(name, admin.companyId),
+      name: uniqueName,
+      code: await uniqueCompanyCode(prisma, uniqueName, admin.companyId),
       brand,
       tagline,
       legalName,

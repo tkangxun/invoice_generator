@@ -8,20 +8,36 @@ import {
   toggleItemActive,
 } from "@/lib/actions/admin";
 import { PriceListCsvCard } from "@/components/PriceListCsvCard";
+import { ItemTypesCard } from "@/components/ItemTypesCard";
 import { ConfirmSubmitButton } from "@/components/ConfirmSubmitButton";
 import { ITEM_ORDER_BY } from "@/lib/item-order";
+import { ensureCompanyDefaults } from "@/lib/company";
+import { listItemTypes } from "@/lib/item-types";
 
 const inputCls =
   "w-full rounded-lg border border-gray-300 px-2 py-1.5 text-sm focus:border-blue-500 focus:outline-none";
 
-export default async function AdminItemsPage() {
+export default async function AdminItemsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ typeError?: string }>;
+}) {
   const admin = await requireAdmin();
+  await ensureCompanyDefaults(admin.companyId);
+  const { typeError } = await searchParams;
 
-  const items = await prisma.item.findMany({
-    where: { companyId: admin.companyId },
-    orderBy: ITEM_ORDER_BY,
-    include: { _count: { select: { lines: true } } },
-  });
+  const [items, types] = await Promise.all([
+    prisma.item.findMany({
+      where: { companyId: admin.companyId },
+      orderBy: ITEM_ORDER_BY,
+      include: { _count: { select: { lines: true } } },
+    }),
+    listItemTypes(admin.companyId),
+  ]);
+  const itemCounts = items.reduce<Record<string, number>>((counts, item) => {
+    counts[item.type] = (counts[item.type] ?? 0) + 1;
+    return counts;
+  }, {});
 
   return (
     <div>
@@ -35,6 +51,12 @@ export default async function AdminItemsPage() {
       </p>
 
       <PriceListCsvCard />
+
+      <ItemTypesCard
+        types={types}
+        itemCounts={itemCounts}
+        error={typeError}
+      />
 
       <div className="mt-6 rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
         <h2 className="font-semibold">Add item</h2>
@@ -60,16 +82,18 @@ export default async function AdminItemsPage() {
           <label className="block text-xs font-medium text-gray-500 sm:col-span-2">
             Type
             <select name="type" className={`mt-1 ${inputCls}`}>
-              <option value="service">Service</option>
-              <option value="supplement">Supplement</option>
-              <option value="package">Package</option>
+              {types.map((type) => (
+                <option key={type.id} value={type.slug}>
+                  {type.name}
+                </option>
+              ))}
             </select>
           </label>
           <label className="block text-xs font-medium text-gray-500 sm:col-span-3">
-            Includes (packages only)
+            Includes (packages / includes types)
             <input
               name="includes"
-              placeholder="e.g. 1x HBOT, 1x Red Light Therapy"
+              placeholder="e.g. 8x gym session, 1x personal training"
               className={`mt-1 ${inputCls}`}
             />
           </label>
@@ -126,9 +150,14 @@ export default async function AdminItemsPage() {
                     defaultValue={item.type}
                     className={`mt-1 ${inputCls}`}
                   >
-                    <option value="service">Service</option>
-                    <option value="supplement">Supplement</option>
-                    <option value="package">Package</option>
+                    {types.some((type) => type.slug === item.type) ? null : (
+                      <option value={item.type}>{item.type}</option>
+                    )}
+                    {types.map((type) => (
+                      <option key={type.id} value={type.slug}>
+                        {type.name}
+                      </option>
+                    ))}
                   </select>
                 </label>
                 <label className="block text-xs font-medium text-gray-500 sm:col-span-4">

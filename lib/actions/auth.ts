@@ -3,8 +3,9 @@
 import bcrypt from "bcryptjs";
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/db";
-import { getSession } from "@/lib/session";
+import { getSession, requireUser } from "@/lib/session";
 import { normalizeCompanyCode } from "@/lib/company-code";
+import { revalidatePath } from "next/cache";
 
 export type LoginState = { error?: string };
 
@@ -15,7 +16,7 @@ export async function login(
   formData: FormData
 ): Promise<LoginState> {
   const companyCode = normalizeCompanyCode(
-    String(formData.get("company") ?? "")
+    String(formData.get("companyCode") ?? formData.get("company") ?? "")
   );
   const email = String(formData.get("email") ?? "")
     .trim()
@@ -63,4 +64,24 @@ export async function logout() {
   const session = await getSession();
   session.destroy();
   redirect("/login");
+}
+
+export async function switchCompany(formData: FormData) {
+  const user = await requireUser();
+  const companyId = String(formData.get("companyId") ?? "");
+  if (!companyId || companyId === user.companyId) return;
+
+  const membership = await prisma.companyMembership.findUnique({
+    where: {
+      userId_companyId: { userId: user.userId, companyId },
+    },
+    select: { companyId: true },
+  });
+  if (!membership) return;
+
+  const session = await getSession();
+  session.companyId = companyId;
+  await session.save();
+  revalidatePath("/", "layout");
+  redirect("/dashboard");
 }

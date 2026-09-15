@@ -1,12 +1,13 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
 import { login, type LoginState } from "@/lib/actions/auth";
 
 const initialState: LoginState = {};
 
 export default function LoginPage() {
   const [state, formAction, pending] = useActionState(login, initialState);
+  const [companyLocked, setCompanyLocked] = useState(true);
 
   return (
     <main className="flex min-h-screen items-center justify-center p-6">
@@ -19,14 +20,34 @@ export default function LoginPage() {
         </div>
         <form
           action={formAction}
-          className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm"
+          className="relative rounded-xl border border-gray-200 bg-white p-6 shadow-sm"
         >
+          <input
+            type="text"
+            name="username"
+            autoComplete="username"
+            tabIndex={-1}
+            aria-hidden="true"
+            suppressHydrationWarning
+            className="pointer-events-none absolute h-0 w-0 opacity-0"
+          />
           <label className="block text-sm font-medium text-gray-700">
             Company ID
             <input
-              name="company"
+              name="companyCode"
               required
-              autoComplete="organization"
+              type="text"
+              inputMode="text"
+              autoComplete="off"
+              autoCorrect="off"
+              autoCapitalize="none"
+              spellCheck={false}
+              data-1p-ignore="true"
+              data-lpignore="true"
+              suppressHydrationWarning
+              placeholder="e.g. alpha-vitality"
+              readOnly={companyLocked}
+              onFocus={() => setCompanyLocked(false)}
               className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
             />
           </label>
@@ -36,7 +57,10 @@ export default function LoginPage() {
               type="email"
               name="email"
               required
-              autoComplete="email"
+              autoComplete="username"
+              autoCapitalize="none"
+              spellCheck={false}
+              suppressHydrationWarning
               className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
             />
           </label>
@@ -47,6 +71,7 @@ export default function LoginPage() {
               name="password"
               required
               autoComplete="current-password"
+              suppressHydrationWarning
               className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
             />
           </label>

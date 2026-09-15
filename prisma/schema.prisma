@@ -48,9 +48,26 @@ model Company {
   updatedAt      DateTime             @updatedAt
   memberships    CompanyMembership[]
   items          Item[]
+  itemTypes      ItemType[]
   invoices       Invoice[]
   receipts       Receipt[]
   paymentMethods PaymentMethod[]
+}
+
+model ItemType {
+  id                String  @id @default(cuid())
+  name              String
+  slug              String
+  tracksCollection  Boolean @default(false)
+  hasIncludes       Boolean @default(false)
+  unitPlural        String  @default("sessions")
+  sortOrder         Int     @default(0)
+  company           Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  companyId         String
+
+  @@unique([companyId, slug])
+  @@unique([companyId, name])
+  @@index([companyId, sortOrder])
 }
 
 model Item {
@@ -119,7 +136,7 @@ model InvoiceLine {
   id             String  @id @default(cuid())
   invoice        Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
   invoiceId      String
-  item           Item?   @relation(fields: [itemId], references: [id])
+  item           Item?   @relation(fields: [itemId], references: [id], onDelete: SetNull)
   itemId         String?
   description    String
   qty            Float

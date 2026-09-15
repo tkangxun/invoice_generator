@@ -8,9 +8,13 @@ type PriceItem = {
   id: string;
   name: string;
   priceCents: number;
-  type: string; // service | supplement | package
+  type: string;
   includes: string | null;
   active?: boolean;
+  typeName?: string;
+  tracksCollection?: boolean;
+  hasIncludes?: boolean;
+  unitPlural?: string;
 };
 
 type CollectionMode = "collected" | "credit" | "partial";
@@ -51,13 +55,15 @@ function collectionFromSaved(
   return { collection: "collected", collectedQty: String(qty) };
 }
 
-// Matches the sample documents: "HBOT (Hyperbaric Oxygen Therapy) (5 sessions)"
+// Gym-style sample: "Personal training (5 sessions)"
 function buildDescription(item: PriceItem, qty: number): string {
-  if (item.type === "package") {
+  if (item.hasIncludes ?? item.type === "package") {
     return item.includes ? `${item.name} — includes ${item.includes}` : item.name;
   }
   if (qty > 1) {
-    const unit = item.type === "supplement" ? "bottles" : "sessions";
+    const unit =
+      item.unitPlural ??
+      (item.type === "supplement" ? "bottles" : "sessions");
     return `${item.name} (${qty} ${unit})`;
   }
   return item.name;
@@ -224,7 +230,7 @@ export function InvoiceForm({
           const qty = parseFloat(l.qty) || 0;
           const item = items.find((i) => i.id === l.itemId);
           let collectedQty: number | undefined;
-          if (item?.type === "supplement") {
+          if (item?.tracksCollection ?? item?.type === "supplement") {
             if (l.collection === "credit") collectedQty = 0;
             else if (l.collection === "partial") {
               collectedQty = Math.min(
@@ -332,7 +338,9 @@ export function InvoiceForm({
         <div className="mt-4 space-y-3">
           {lines.map((line, idx) => {
             const item = items.find((i) => i.id === line.itemId);
-            const isSupplement = item?.type === "supplement";
+            const isSupplement =
+              item?.tracksCollection ?? item?.type === "supplement";
+            const unit = item?.unitPlural ?? "bottles";
             const qty = parseFloat(line.qty) || 0;
             return (
             <div key={line.key} className="border-b border-gray-100 pb-3">
@@ -350,7 +358,9 @@ export function InvoiceForm({
                   {items.map((i) => (
                     <option key={i.id} value={i.id}>
                       {i.name} ({formatCents(i.priceCents)})
-                      {i.type === "package" ? " — package" : ""}
+                      {i.hasIncludes ?? i.type === "package"
+                        ? ` — ${i.typeName ?? "package"}`
+                        : ""}
                       {i.active === false ? " (disabled)" : ""}
                     </option>
                   ))}
@@ -412,7 +422,7 @@ export function InvoiceForm({
             {isSupplement && (
               <div className="mt-2 flex flex-wrap items-end gap-3 rounded-lg bg-amber-50 px-3 py-2">
                 <label className="block text-xs font-medium text-amber-900">
-                  Supplement collection
+                  {item?.typeName ?? "Item"} collection
                   <select
                     className={`mt-1 ${inputCls} max-w-xs bg-white`}
                     value={line.collection}
@@ -446,7 +456,7 @@ export function InvoiceForm({
                 </label>
                 {line.collection === "partial" && (
                   <label className="block text-xs font-medium text-amber-900">
-                    Bottles collected
+                    {`${unit.endsWith("s") ? unit.slice(0, -1) : unit} collected`}
                     <input
                       type="number"
                       min="0"
@@ -462,10 +472,10 @@ export function InvoiceForm({
                 )}
                 <p className="pb-2 text-xs text-amber-800">
                   {line.collection === "credit"
-                    ? "All bottles stored as customer credit."
+                    ? `All ${unit} stored as customer credit.`
                     : line.collection === "partial"
                       ? `${line.collectedQty || 0} collected, remainder held as credit.`
-                      : "All bottles collected when this invoice is paid."}
+                      : `All ${unit} collected when this invoice is paid.`}
                 </p>
               </div>
             )}

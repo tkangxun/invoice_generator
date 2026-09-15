@@ -158,10 +158,10 @@ function InvoicePreviewBody({ company }: { company: InvoicePreviewCompany }) {
         </thead>
         <tbody>
           <tr className="border-b border-gray-200">
-            <td className="px-3 py-2.5">Vitality Experience</td>
+            <td className="px-3 py-2.5">Personal training (5 sessions)</td>
             <td className="px-3 py-2.5 text-right">1</td>
-            <td className="px-3 py-2.5 text-right">S$500.00</td>
-            <td className="px-3 py-2.5 text-right">S$500.00</td>
+            <td className="px-3 py-2.5 text-right">S$375.00</td>
+            <td className="px-3 py-2.5 text-right">S$375.00</td>
           </tr>
         </tbody>
       </table>
@@ -170,12 +170,12 @@ function InvoicePreviewBody({ company }: { company: InvoicePreviewCompany }) {
         <div className="w-72 text-sm">
           <div className="flex justify-between border-b border-gray-200 px-3 py-2">
             <span className="text-gray-600">Subtotal</span>
-            <span>S$500.00</span>
+            <span>S$375.00</span>
           </div>
           <div className="flex items-center justify-between px-3 py-2">
             <span className="font-bold">AMOUNT TO BE PAID</span>
             <span className="text-lg font-bold" style={{ color: NAVY }}>
-              S$500.00
+              S$375.00
             </span>
           </div>
         </div>

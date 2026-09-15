@@ -14,7 +14,7 @@ export const PRICE_LIST_CSV_HEADERS = [
 ] as const;
 
 export const ITEM_TYPES = ["service", "supplement", "package"] as const;
-export type ItemType = (typeof ITEM_TYPES)[number];
+export type ItemType = string;
 
 export type PriceListCsvItem = {
   id: string | null;
@@ -22,7 +22,7 @@ export type PriceListCsvItem = {
   name: string;
   description: string | null;
   priceCents: number;
-  type: ItemType;
+  type: string;
   aliases: string | null;
   includes: string | null;
   active: boolean;
@@ -71,10 +71,9 @@ function blankToNull(value: string | undefined): string | null {
   return text ? text : null;
 }
 
-export function parseItemType(value: string | undefined): ItemType | null {
+export function parseItemType(value: string | undefined): string {
   const type = (value ?? "").trim().toLowerCase();
-  if (!type) return "service";
-  return ITEM_TYPES.includes(type as ItemType) ? (type as ItemType) : null;
+  return type || "service";
 }
 
 export function parseActiveFlag(value: string | undefined): boolean | null {
@@ -183,12 +182,6 @@ export function parsePriceListCsv(text: string): {
     }
 
     const type = parseItemType(cell("type"));
-    if (!type) {
-      errors.push(
-        `Row ${line}: type must be service, supplement, or package.`
-      );
-      return;
-    }
 
     const activeRaw = cell("active");
     const activeValue = parseActiveFlag(activeRaw);

@@ -15,6 +15,7 @@ import { paidCents, remainingCents, statusFromPaid } from "@/lib/payments";
 import { isFollowUpInvoiceNumber, isReceiptNumber } from "@/lib/docs";
 import { parseVoidReason } from "@/lib/void-reasons";
 import type { Prisma } from "@prisma/client";
+import { collectionSlugs, listItemTypes } from "@/lib/item-types";
 
 async function issueSettlementReceipt(
   tx: Prisma.TransactionClient,
@@ -112,12 +113,13 @@ async function buildInvoiceLines(
         select: { id: true, type: true },
       })
     : [];
+  const types = await listItemTypes(companyId);
+  const collection = collectionSlugs(types);
   const typeById = new Map(items.map((item) => [item.id, item.type]));
 
   return lines.map((line) => {
-    const isSupplement = line.itemId
-      ? typeById.get(line.itemId) === "supplement"
-      : false;
+    const slug = line.itemId ? typeById.get(line.itemId) : undefined;
+    const isSupplement = slug ? collection.has(slug) : false;
     let collectedQty: number | null = null;
     if (isSupplement) {
       const requested = line.collectedQty;
@@ -127,7 +129,7 @@ async function buildInvoiceLines(
           : Math.min(line.qty, Math.max(0, requested));
     }
     return {
-      itemId: line.itemId || null,
+      itemId: line.itemId && typeById.has(line.itemId) ? line.itemId : null,
       description: line.description.trim(),
       qty: line.qty,
       unitPriceCents: Math.round(line.unitPriceCents),

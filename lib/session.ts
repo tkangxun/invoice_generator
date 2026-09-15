@@ -83,8 +83,9 @@ async function loadAuthedUser(): Promise<AuthedUser | null> {
 export async function requireUser(): Promise<AuthedUser> {
   const user = await loadAuthedUser();
   if (!user) {
-    const session = await getSession();
-    session.destroy();
+    // Do not destroy the cookie here. Session cookies can only be written
+    // from a Server Action or Route Handler; calling destroy() during RSC
+    // render 500s the page instead of sending the user to login.
     redirect("/login");
   }
   return user;

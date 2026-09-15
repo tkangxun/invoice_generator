@@ -1,63 +1,64 @@
 [
   {
-    "name": "HBOT (Hyperbaric Oxygen Therapy)",
-    "priceCents": 26000,
+    "name": "Gym session (drop-in)",
+    "priceCents": 2500,
     "type": "service",
-    "aliases": "hbot, hyperbaric"
+    "aliases": "gym, drop-in, day pass, open gym"
   },
   {
-    "name": "Red Light Therapy",
-    "priceCents": 11000,
+    "name": "Group class",
+    "priceCents": 3500,
     "type": "service",
-    "aliases": "rlt, red light, redlight"
+    "aliases": "class, group class, hiit, yoga"
   },
   {
-    "name": "BIXEPS (PEMF)",
+    "name": "Personal training",
+    "priceCents": 8000,
+    "type": "service",
+    "aliases": "pt, personal trainer, 1-to-1"
+  },
+  {
+    "name": "Small group training",
+    "priceCents": 4500,
+    "type": "service",
+    "aliases": "sgt, duo, trio, semi-private"
+  },
+  {
+    "name": "Fitness assessment",
     "priceCents": 6000,
     "type": "service",
-    "aliases": "bixeps, bixep, pemf"
+    "aliases": "assessment, inbody, consult"
   },
   {
-    "name": "Personal Training",
-    "priceCents": 15000,
+    "name": "Guest pass",
+    "priceCents": 1500,
     "type": "service",
-    "aliases": "personal training, pt"
+    "aliases": "guest, visitor pass"
   },
   {
-    "name": "Contrast Therapy",
-    "priceCents": 5000,
-    "type": "service",
-    "aliases": "contrast"
-  },
-  {
-    "name": "Vitality Assessment",
-    "priceCents": 12000,
-    "type": "service",
-    "aliases": "vitality assessment, assessment, inbody assessment"
-  },
-  {
-    "name": "Absolute Vitality (NMN)",
-    "priceCents": 38000,
+    "name": "Protein powder",
+    "priceCents": 6500,
     "type": "supplement",
-    "aliases": "absolute vitality, nmn"
+    "aliases": "protein, whey"
   },
   {
-    "name": "Asta80 (Astaxanthin)",
-    "priceCents": 25000,
+    "name": "Creatine",
+    "priceCents": 4500,
     "type": "supplement",
-    "aliases": "astaxanthin, asta80, asta"
+    "aliases": "creatine monohydrate"
   },
   {
-    "name": "Ultimate Probiotics",
-    "priceCents": 14000,
-    "type": "supplement",
-    "aliases": "ultimate probiotics, probiotics, probiotic, probio"
-  },
-  {
-    "name": "Vitality Experience",
-    "priceCents": 50000,
+    "name": "Starter pack",
+    "priceCents": 20000,
     "type": "package",
-    "aliases": "vitality experience, vitality exp",
-    "includes": "1x HBOT (Hyperbaric Oxygen Therapy), 1x Red Light Therapy, 1x BIXEPS (PEMF), 1x Vitality Assessment"
+    "aliases": "starter, intro pack, beginner pack",
+    "includes": "8x gym session, 1x fitness assessment"
+  },
+  {
+    "name": "PT 5-pack",
+    "priceCents": 37500,
+    "type": "package",
+    "aliases": "pt pack, 5 sessions, personal training pack",
+    "includes": "5x personal training"
   }
 ]

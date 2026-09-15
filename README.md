@@ -4,7 +4,7 @@ A web app for the sales team to generate invoices and receipts, and track their 
 
 ## Features
 
-- Login with **company ID + email + password** (one email worldwide; sales belong to one company, admins can hold several)
+- Login with **company ID + email + password** (one email worldwide; sales belong to one company, admins can hold several and switch from the header)
 - Each company has its own letterhead, price list, users, and invoice/receipt numbers
 - Create invoices from that company’s price list (or custom line items)
 - Auto-generated sequential numbering per company: `INV-2026-0001`, `RCP-2026-0001` (resets each year)
@@ -35,7 +35,7 @@ Company ID: `alpha-vitality`
 | alice@example.com | sales123 | Sales |
 | ben@example.com   | sales123 | Sales |
 
-Admins who hold more than one company switch by logging out and signing in with the other company ID (there is no in-app switcher). Change these accounts before real use. Production never creates the demo emails.
+Admins who hold more than one company can switch from the company menu in the header. Change these accounts before real use. Production never creates the demo emails.
 
 ## Host on Railway
 

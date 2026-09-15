@@ -5,6 +5,7 @@ import { canAccessInvoice, membersWhere, requireUser } from "@/lib/session";
 import { InvoiceForm } from "@/components/InvoiceForm";
 import { toDateInput } from "@/lib/money";
 import { ITEM_ORDER_BY } from "@/lib/item-order";
+import { decorateItems, listItemTypes } from "@/lib/item-types";
 
 export default async function EditInvoicePage({
   params,
@@ -26,7 +27,7 @@ export default async function EditInvoicePage({
     .map((line) => line.itemId)
     .filter((itemId): itemId is string => Boolean(itemId));
 
-  const [items, salespeople] = await Promise.all([
+  const [items, salespeople, types] = await Promise.all([
     prisma.item.findMany({
       where: {
         OR: [
@@ -51,6 +52,7 @@ export default async function EditInvoicePage({
           select: { id: true, name: true, active: true },
         })
       : Promise.resolve(undefined),
+    listItemTypes(user.companyId),
   ]);
 
   return (
@@ -61,7 +63,7 @@ export default async function EditInvoicePage({
       <h1 className="mt-3 text-xl font-bold">Edit {invoice.number}</h1>
       <div className="mt-6">
         <InvoiceForm
-          items={items}
+          items={decorateItems(items, types)}
           invoice={{
             id: invoice.id,
             number: invoice.number,

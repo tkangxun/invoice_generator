@@ -23,7 +23,8 @@ export function PriceListCsvCard() {
             Export the current list, edit it in a spreadsheet, then import.
             Rows with an existing id or sku are updated; other rows are added.
             If you import a full export, CSV row order becomes the dropdown
-            order. Existing invoices keep the prices they were created with.
+            order. Type values must match this company's item types (name or
+            CSV slug). Existing invoices keep the prices they were created with.
           </p>
         </div>
         <a

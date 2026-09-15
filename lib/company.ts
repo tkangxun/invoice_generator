@@ -1,5 +1,7 @@
 import { prisma } from "@/lib/db";
 import { DEFAULT_PAYMENT_METHODS } from "@/lib/payment-methods";
+import { defaultItemTypeData } from "@/lib/item-types";
+import defaultPriceList from "@/prisma/default-price-list.json";
 
 export type CompanyInfo = {
   id: string;
@@ -131,6 +133,18 @@ export async function listHeldCompanies(
   return rows.map((row) => row.company);
 }
 
+export function defaultPriceListData(companyId: string) {
+  return defaultPriceList.map((item, sortOrder) => ({
+    name: item.name,
+    priceCents: item.priceCents,
+    type: item.type,
+    aliases: item.aliases ?? null,
+    includes: "includes" in item ? item.includes : null,
+    sortOrder,
+    companyId,
+  }));
+}
+
 export async function ensureCompanyDefaults(companyId: string) {
   if ((await prisma.paymentMethod.count({ where: { companyId } })) === 0) {
     await prisma.paymentMethod.createMany({
@@ -139,6 +153,16 @@ export async function ensureCompanyDefaults(companyId: string) {
         sortOrder,
         companyId,
       })),
+    });
+  }
+  if ((await prisma.itemType.count({ where: { companyId } })) === 0) {
+    await prisma.itemType.createMany({
+      data: defaultItemTypeData(companyId),
+    });
+  }
+  if ((await prisma.item.count({ where: { companyId } })) === 0) {
+    await prisma.item.createMany({
+      data: defaultPriceListData(companyId),
     });
   }
 }

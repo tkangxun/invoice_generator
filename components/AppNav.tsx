@@ -3,6 +3,10 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useId, useState } from "react";
+import {
+  CompanySwitcher,
+  type SwitchableCompany,
+} from "@/components/CompanySwitcher";
 
 const links = [
   { href: "/dashboard", label: "Dashboard" },
@@ -15,14 +19,18 @@ export function AppNav({
   isAdmin,
   companyName,
   companyCode,
-  canSwitchCompany,
+  currentCompanyId,
+  companies,
+  switchCompanyAction,
   logoutAction,
 }: {
   name: string;
   isAdmin: boolean;
   companyName: string;
   companyCode: string;
-  canSwitchCompany: boolean;
+  currentCompanyId: string;
+  companies: SwitchableCompany[];
+  switchCompanyAction: (formData: FormData) => Promise<void>;
   logoutAction: () => Promise<void>;
 }) {
   const pathname = usePathname();
@@ -32,6 +40,7 @@ export function AppNav({
     ...links,
     ...(isAdmin ? [{ href: "/admin", label: "Settings" }] : []),
   ];
+  const canSwitchCompany = companies.length > 1;
 
   useEffect(() => {
     setOpen(false);
@@ -76,15 +85,20 @@ export function AppNav({
             <span className="md:hidden">+ New</span>
             <span className="hidden md:inline">+ New Invoice</span>
           </Link>
-          <span className="hidden text-sm text-gray-500 md:inline">
-            {name}
-            <span className="ml-2 text-xs text-gray-400">
-              {companyName} · {companyCode}
-              {canSwitchCompany
-                ? " · Log out and sign in with another company ID to switch"
-                : ""}
-            </span>
-          </span>
+          <div className="hidden items-center gap-2 md:flex">
+            {canSwitchCompany ? (
+              <CompanySwitcher
+                companies={companies}
+                currentCompanyId={currentCompanyId}
+                switchAction={switchCompanyAction}
+              />
+            ) : (
+              <span className="text-xs text-gray-400">
+                {companyName} · {companyCode}
+              </span>
+            )}
+            <span className="text-sm text-gray-500">{name}</span>
+          </div>
           <form action={logoutAction} className="hidden md:block">
             <button
               type="submit"
@@ -136,12 +150,19 @@ export function AppNav({
             ))}
             <div className="mt-1 border-t border-gray-100 pt-2">
               <p className="px-2 py-2 text-sm text-gray-500">{name}</p>
-              <p className="px-2 pb-2 text-xs text-gray-400">
-                {companyName} · {companyCode}
-                {canSwitchCompany
-                  ? " · Log out and sign in with another company ID to switch."
-                  : ""}
-              </p>
+              {canSwitchCompany ? (
+                <div className="px-2 pb-2">
+                  <CompanySwitcher
+                    companies={companies}
+                    currentCompanyId={currentCompanyId}
+                    switchAction={switchCompanyAction}
+                  />
+                </div>
+              ) : (
+                <p className="px-2 pb-2 text-xs text-gray-400">
+                  {companyName} · {companyCode}
+                </p>
+              )}
               <form action={logoutAction}>
                 <button
                   type="submit"

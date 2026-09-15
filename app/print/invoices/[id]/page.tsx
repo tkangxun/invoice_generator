@@ -4,6 +4,7 @@ import { prisma } from "@/lib/db";
 import { canAccessInvoice, requireUser } from "@/lib/session";
 import { formatCents, formatDate } from "@/lib/money";
 import { getCompany } from "@/lib/company";
+import { collectionCatalog } from "@/lib/item-types";
 import { PrintButton } from "@/components/PrintButton";
 import {
   supplementCollectionNote,
@@ -29,7 +30,12 @@ export default async function PrintInvoicePage({
   });
   if (!invoice) notFound();
   if (!canAccessInvoice(user, invoice)) notFound();
-  const creditNotes = supplementCreditSummary(invoice.lines);
+  const catalog = await collectionCatalog(invoice.companyId);
+  const creditNotes = supplementCreditSummary(
+    invoice.lines,
+    catalog.slugs,
+    catalog.unitFor
+  );
   const company = await getCompany(invoice.companyId);
 
   return (
@@ -136,7 +142,11 @@ export default async function PrintInvoicePage({
           </thead>
           <tbody>
             {invoice.lines.map((line) => {
-              const collectionNote = supplementCollectionNote(line);
+              const collectionNote = supplementCollectionNote(
+                line,
+                catalog.slugs,
+                catalog.unitFor(line.item?.type ?? "")
+              );
               return (
               <tr key={line.id} className="border-b border-gray-200">
                 <td className="px-3 py-2.5">

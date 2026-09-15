@@ -3,21 +3,29 @@ import { requireAdmin } from "@/lib/session";
 import { grantAdmin, revokeAdmin } from "@/lib/actions/admin";
 import { CreateCompanyForm } from "@/components/CreateCompanyForm";
 import { ConfirmSubmitButton } from "@/components/ConfirmSubmitButton";
+import { HeldCompaniesCard } from "@/components/HeldCompaniesCard";
 
 export default async function AdminCompaniesPage({
   searchParams,
 }: {
-  searchParams: Promise<{ error?: string; created?: string }>;
+  searchParams: Promise<{ error?: string; created?: string; deleted?: string }>;
 }) {
   const admin = await requireAdmin();
-  const { error, created } = await searchParams;
+  const { error, created, deleted } = await searchParams;
 
   const [held, admins] = await Promise.all([
     prisma.companyMembership.findMany({
       where: { userId: admin.userId },
       orderBy: { company: { name: "asc" } },
       select: {
-        company: { select: { id: true, code: true, name: true } },
+        company: {
+          select: {
+            id: true,
+            code: true,
+            name: true,
+            _count: { select: { invoices: true, receipts: true } },
+          },
+        },
       },
     }),
     prisma.companyMembership.findMany({
@@ -37,14 +45,15 @@ export default async function AdminCompaniesPage({
         <span className="font-medium text-gray-700">
           {admin.companyName} ({admin.companyCode})
         </span>
-        . Log out and use another company ID to switch. New companies start with
-        this letterhead; tick the box to copy the price list too.
+        . Switch company from the menu in the header. New companies start with
+        this letterhead and a sample gym price list. Tick the box to copy this
+        company’s price list instead.
       </p>
 
       {created && (
         <p className="mt-4 text-sm text-green-700">
-          Created company <span className="font-medium">{created}</span>. Log
-          out and sign in with that company ID to open it.
+          Created company <span className="font-medium">{created}</span>. Switch
+          to it from the company menu in the header.
         </p>
       )}
       {error === "admin-not-found" && (
@@ -66,24 +75,18 @@ export default async function AdminCompaniesPage({
         <p className="mt-4 text-sm text-red-600">Enter an admin email.</p>
       )}
 
-      <div className="mt-6 rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-        <h2 className="font-semibold">Companies I hold</h2>
-        <ul className="mt-3 divide-y divide-gray-100">
-          {held.map(({ company }) => (
-            <li key={company.id} className="flex items-center justify-between py-2">
-              <div>
-                <div className="font-medium">{company.name}</div>
-                <div className="text-xs text-gray-500">{company.code}</div>
-              </div>
-              {company.id === admin.companyId && (
-                <span className="text-xs font-semibold text-green-700">
-                  Current
-                </span>
-              )}
-            </li>
-          ))}
-        </ul>
-      </div>
+      <HeldCompaniesCard
+        companies={held.map(({ company }) => ({
+          id: company.id,
+          code: company.code,
+          name: company.name,
+          invoiceCount: company._count.invoices,
+          receiptCount: company._count.receipts,
+        }))}
+        currentCompanyId={admin.companyId}
+        error={error}
+        deleted={Boolean(deleted)}
+      />
 
       <div className="mt-6 rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
         <h2 className="font-semibold">Create company</h2>

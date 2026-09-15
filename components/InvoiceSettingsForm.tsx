@@ -9,12 +9,12 @@ import {
   type InvoicePreviewCompany,
 } from "@/components/InvoicePreview";
 import type { CompanyInfo } from "@/lib/company";
+import { normalizeCompanyCode } from "@/lib/company-code";
 
 const inputCls =
   "mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none";
 
 export function InvoiceSettingsForm({ company }: { company: CompanyInfo }) {
-  const [code, setCode] = useState(company.code);
   const [name, setName] = useState(company.name);
   const [brand, setBrand] = useState(company.brand);
   const [tagline, setTagline] = useState(company.tagline);
@@ -85,16 +85,15 @@ export function InvoiceSettingsForm({ company }: { company: CompanyInfo }) {
         <p className="mt-1 text-sm text-gray-500">
           Shown on printed invoices and receipts for this company.
         </p>
-        <label className="mt-4 block text-sm font-medium text-gray-700">
+        <div className="mt-4 block text-sm font-medium text-gray-700">
           Company ID (login)
-          <input
-            name="code"
-            value={code}
-            onChange={(e) => setCode(e.target.value)}
-            required
-            className={inputCls}
-          />
-        </label>
+          <p className="mt-1 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm font-normal text-gray-600">
+            {normalizeCompanyCode(name) || company.code}
+          </p>
+          <p className="mt-1 text-xs font-normal text-gray-400">
+            Generated from the company name. It updates when you rename.
+          </p>
+        </div>
         <label className="mt-3 block text-sm font-medium text-gray-700">
           Company name
           <input

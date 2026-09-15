@@ -20,6 +20,7 @@ import {
   supplementCreditSummary,
 } from "@/lib/supplements";
 import { getActivePaymentMethods } from "@/lib/payment-methods";
+import { collectionCatalog } from "@/lib/item-types";
 
 export default async function InvoiceDetailPage({
   params,
@@ -44,7 +45,7 @@ export default async function InvoiceDetailPage({
     user.role === "ADMIN"
       ? { companyId: user.companyId }
       : { companyId: user.companyId, userId: user.userId };
-  const [previousInvoice, nextInvoice, paymentMethods] = await Promise.all([
+  const [previousInvoice, nextInvoice, paymentMethods, catalog] = await Promise.all([
     prisma.invoice.findFirst({
       where: { ...visibleTo, number: { lt: invoice.number } },
       orderBy: { number: "desc" },
@@ -56,12 +57,17 @@ export default async function InvoiceDetailPage({
       select: { id: true, number: true },
     }),
     getActivePaymentMethods(user.companyId),
+    collectionCatalog(invoice.companyId),
   ]);
 
   const paid = paidCents(invoice.receipts);
   const due = remainingCents(invoice.totalCents, invoice.receipts);
   const receiptDoc = settlementReceipt(invoice.receipts);
-  const creditNotes = supplementCreditSummary(invoice.lines);
+  const creditNotes = supplementCreditSummary(
+    invoice.lines,
+    catalog.slugs,
+    catalog.unitFor
+  );
   const installments = invoice.receipts.filter((r) =>
     isFollowUpInvoiceNumber(r.number)
   );
@@ -192,7 +198,11 @@ export default async function InvoiceDetailPage({
               </thead>
               <tbody>
                 {invoice.lines.map((line) => {
-                  const collectionNote = supplementCollectionNote(line);
+                  const collectionNote = supplementCollectionNote(
+                    line,
+                    catalog.slugs,
+                    catalog.unitFor(line.item?.type ?? "")
+                  );
                   return (
                   <tr key={line.id} className="border-b border-gray-100">
                     <td className="py-2.5">
