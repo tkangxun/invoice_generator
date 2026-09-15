@@ -1,7 +1,7 @@
 /* eslint-disable @next/next/no-img-element */
 import { notFound, redirect } from "next/navigation";
 import { prisma } from "@/lib/db";
-import { requireUser } from "@/lib/session";
+import { canAccessInvoice, requireUser } from "@/lib/session";
 import { formatCents, formatDate } from "@/lib/money";
 import { getCompany } from "@/lib/company";
 import { PrintButton } from "@/components/PrintButton";
@@ -30,15 +30,14 @@ export default async function PrintReceiptPage({
     },
   });
   if (!receipt) notFound();
-  if (user.role !== "ADMIN" && receipt.invoice.userId !== user.userId)
-    notFound();
+  if (!canAccessInvoice(user, receipt.invoice)) notFound();
   if (isFollowUpInvoiceNumber(receipt.number)) {
     redirect(`/print/follow-up/${receipt.id}`);
   }
 
   const invoice = receipt.invoice;
   const creditNotes = supplementCreditSummary(invoice.lines);
-  const company = await getCompany(invoice.profileId);
+  const company = await getCompany(invoice.companyId);
 
   return (
     <div className="min-h-screen bg-gray-100 py-8 print:bg-white print:py-0">

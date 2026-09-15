@@ -93,26 +93,18 @@ export type SalespersonOption = {
   active: boolean;
 };
 
-export type InvoiceProfileOption = {
-  id: string;
-  name: string;
-  active: boolean;
-};
-
 export function InvoiceForm({
   items,
   invoice,
   salespeople,
   currentUserId,
-  profiles,
-  mainProfileName,
+  companyName,
 }: {
   items: PriceItem[];
   invoice?: InvoiceFormValues;
   salespeople?: SalespersonOption[];
   currentUserId?: string;
-  profiles?: InvoiceProfileOption[];
-  mainProfileName?: string;
+  companyName?: string;
 }) {
   const isEdit = Boolean(invoice);
   const [customerName, setCustomerName] = useState(invoice?.customerName ?? "");
@@ -141,9 +133,6 @@ export function InvoiceForm({
   );
   const [ownerId, setOwnerId] = useState(
     invoice?.userId ?? currentUserId ?? salespeople?.[0]?.id ?? ""
-  );
-  const [profileId, setProfileId] = useState(
-    profiles?.find((profile) => profile.active)?.id ?? profiles?.[0]?.id ?? ""
   );
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
@@ -231,7 +220,6 @@ export function InvoiceForm({
         dueAt: dueAt || undefined,
         issuedAt: issuedAt || undefined,
         userId: ownerId || undefined,
-        profileId: profileId || undefined,
         lines: lines.map((l) => {
           const qty = parseFloat(l.qty) || 0;
           const item = items.find((i) => i.id === l.itemId);
@@ -293,34 +281,9 @@ export function InvoiceForm({
         </section>
       )}
 
-      {!isEdit && profiles && profiles.length > 0 && (
-        <section className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
-          <h2 className="font-semibold">Profile</h2>
-          <p className="mt-1 text-sm text-gray-500">
-            Sales invoices always use the main profile. Admins can choose
-            another saved profile.
-          </p>
-          <label className="mt-4 block max-w-md text-sm font-medium text-gray-700">
-            Branding profile
-            <select
-              className={`mt-1 ${inputCls}`}
-              value={profileId}
-              onChange={(e) => setProfileId(e.target.value)}
-            >
-              {profiles.map((profile) => (
-                <option key={profile.id} value={profile.id}>
-                  {profile.name}
-                  {profile.active ? " (main)" : ""}
-                </option>
-              ))}
-            </select>
-          </label>
-        </section>
-      )}
-
-      {!isEdit && !profiles && mainProfileName && (
+      {!isEdit && companyName && (
         <p className="text-sm text-gray-500">
-          This invoice uses the main profile, {mainProfileName}.
+          This invoice uses {companyName}.
         </p>
       )}
 

@@ -13,10 +13,16 @@ const links = [
 export function AppNav({
   name,
   isAdmin,
+  companyName,
+  companyCode,
+  canSwitchCompany,
   logoutAction,
 }: {
   name: string;
   isAdmin: boolean;
+  companyName: string;
+  companyCode: string;
+  canSwitchCompany: boolean;
   logoutAction: () => Promise<void>;
 }) {
   const pathname = usePathname();
@@ -70,7 +76,15 @@ export function AppNav({
             <span className="md:hidden">+ New</span>
             <span className="hidden md:inline">+ New Invoice</span>
           </Link>
-          <span className="hidden text-sm text-gray-500 md:inline">{name}</span>
+          <span className="hidden text-sm text-gray-500 md:inline">
+            {name}
+            <span className="ml-2 text-xs text-gray-400">
+              {companyName} · {companyCode}
+              {canSwitchCompany
+                ? " · Log out and sign in with another company ID to switch"
+                : ""}
+            </span>
+          </span>
           <form action={logoutAction} className="hidden md:block">
             <button
               type="submit"
@@ -122,6 +136,12 @@ export function AppNav({
             ))}
             <div className="mt-1 border-t border-gray-100 pt-2">
               <p className="px-2 py-2 text-sm text-gray-500">{name}</p>
+              <p className="px-2 pb-2 text-xs text-gray-400">
+                {companyName} · {companyCode}
+                {canSwitchCompany
+                  ? " · Log out and sign in with another company ID to switch."
+                  : ""}
+              </p>
               <form action={logoutAction}>
                 <button
                   type="submit"

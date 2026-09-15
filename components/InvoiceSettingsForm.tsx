@@ -3,29 +3,18 @@
 
 import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import {
-  activateCompanyProfile,
-  createCompanyProfile,
-  deleteCompanyProfile,
-  updateCompanySettings,
-} from "@/lib/actions/admin";
-import { ConfirmSubmitButton } from "@/components/ConfirmSubmitButton";
+import { updateCompanySettings } from "@/lib/actions/admin";
 import {
   InvoicePreview,
   type InvoicePreviewCompany,
 } from "@/components/InvoicePreview";
-import type { CompanyInfo, CompanyProfileSummary } from "@/lib/company";
+import type { CompanyInfo } from "@/lib/company";
 
 const inputCls =
   "mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none";
 
-export function InvoiceSettingsForm({
-  company,
-  profiles,
-}: {
-  company: CompanyInfo;
-  profiles: CompanyProfileSummary[];
-}) {
+export function InvoiceSettingsForm({ company }: { company: CompanyInfo }) {
+  const [code, setCode] = useState(company.code);
   const [name, setName] = useState(company.name);
   const [brand, setBrand] = useState(company.brand);
   const [tagline, setTagline] = useState(company.tagline);
@@ -87,90 +76,27 @@ export function InvoiceSettingsForm({
   }
 
   return (
-    <div>
-      <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
-        <div className="flex flex-wrap items-end gap-3">
-          <label className="min-w-[12rem] flex-1 text-sm font-medium text-gray-700">
-            Profile
-            <select
-              value={company.id}
-              onChange={(e) =>
-                router.push(`/admin/invoice-settings?profile=${e.target.value}`)
-              }
-              className={inputCls}
-            >
-              {profiles.map((profile) => (
-                <option key={profile.id} value={profile.id}>
-                  {profile.name}
-                  {profile.active ? " (main)" : ""}
-                </option>
-              ))}
-            </select>
-          </label>
-          {company.active ? (
-            <p className="pb-2 text-sm font-medium text-green-700">
-              Main profile for sales invoices
-            </p>
-          ) : (
-            <form action={activateCompanyProfile.bind(null, company.id)}>
-              <button
-                type="submit"
-                className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
-              >
-                Set as main profile
-              </button>
-            </form>
-          )}
-          {profiles.length > 1 && (
-            <form action={deleteCompanyProfile.bind(null, company.id)}>
-              <ConfirmSubmitButton
-                confirmMessage={`Delete profile ${company.name}? ${
-                  company.active
-                    ? "Another saved profile will become the main profile."
-                    : "The main profile will stay the same."
-                }`}
-                className="rounded-lg border border-red-200 px-4 py-2 text-sm font-medium text-red-600 hover:bg-red-50"
-              >
-                Delete
-              </ConfirmSubmitButton>
-            </form>
-          )}
-        </div>
-        <form
-          action={createCompanyProfile}
-          className="mt-3 flex flex-wrap items-end gap-2 border-t border-gray-100 pt-3"
-        >
-          <input type="hidden" name="copyFromId" value={company.id} />
-          <label className="min-w-[12rem] flex-1 text-sm font-medium text-gray-700">
-            New profile
-            <input
-              name="name"
-              required
-              placeholder="e.g. Event booth"
-              className={inputCls}
-            />
-          </label>
-          <button
-            type="submit"
-            className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium hover:bg-gray-50"
-          >
-            Copy current
-          </button>
-        </form>
-      </div>
-
-    <div className="mt-6 grid grid-cols-1 items-start gap-6 xl:grid-cols-2">
+    <div className="grid grid-cols-1 items-start gap-6 xl:grid-cols-2">
       <form
         action={submit}
         className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm"
       >
         <h2 className="font-semibold">Company details</h2>
         <p className="mt-1 text-sm text-gray-500">
-          Shown on printed invoices and receipts when this profile is in use.
+          Shown on printed invoices and receipts for this company.
         </p>
-        <input type="hidden" name="profileId" value={company.id} />
         <label className="mt-4 block text-sm font-medium text-gray-700">
-          Profile name
+          Company ID (login)
+          <input
+            name="code"
+            value={code}
+            onChange={(e) => setCode(e.target.value)}
+            required
+            className={inputCls}
+          />
+        </label>
+        <label className="mt-3 block text-sm font-medium text-gray-700">
+          Company name
           <input
             name="name"
             value={name}
@@ -271,15 +197,12 @@ export function InvoiceSettingsForm({
       <div className="xl:sticky xl:top-20">
         <h2 className="font-semibold">Invoice preview</h2>
         <p className="mt-1 text-sm text-gray-500">
-          {company.active
-            ? "This is the main profile. Sales invoices use this branding."
-            : "Preview only — set as main before sales can create invoices with it."}
+          This is the branding used on new invoices for this company.
         </p>
         <div className="mt-4 h-[min(72vh,calc(100vh-12rem))] rounded-xl border border-gray-200 bg-gray-100 p-3">
           <InvoicePreview company={preview} />
         </div>
       </div>
-    </div>
     </div>
   );
 }

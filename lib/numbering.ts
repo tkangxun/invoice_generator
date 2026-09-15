@@ -5,16 +5,17 @@ import { todayDateInput } from "@/lib/money";
 // Must be called inside a prisma transaction so numbers are never duplicated.
 export async function nextDocNumber(
   tx: Prisma.TransactionClient,
-  prefix: "INV" | "RCP"
+  prefix: "INV" | "RCP",
+  companyId: string
 ): Promise<string> {
   const year = Number(todayDateInput().slice(0, 4));
-  const key = `${prefix}-${year}`;
+  const key = `${companyId}:${prefix}-${year}`;
   const counter = await tx.counter.upsert({
     where: { id: key },
     create: { id: key, value: 1 },
     update: { value: { increment: 1 } },
   });
-  return `${key}-${String(counter.value).padStart(4, "0")}`;
+  return `${prefix}-${year}-${String(counter.value).padStart(4, "0")}`;
 }
 
 // Partial-payment receipts keep the original invoice number and add -a, -b, -c…

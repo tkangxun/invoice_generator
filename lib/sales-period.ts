@@ -169,10 +169,7 @@ export function receiptsPaidAtWhere(
   return { paidAt: { gte: range.start, lt: range.end } };
 }
 
-function receiptsScopeParams(
-  scope: ReceiptsListScope,
-  profile?: string
-): URLSearchParams {
+function receiptsScopeParams(scope: ReceiptsListScope): URLSearchParams {
   const params = new URLSearchParams();
   if (scope.kind === "all") params.set("sales", "all");
   if (scope.kind === "recent") params.set("sales", "recent");
@@ -180,25 +177,18 @@ function receiptsScopeParams(
     params.set("sales", scope.mode);
     params.set("period", scope.period);
   }
-  if (profile) params.set("profile", profile);
   return params;
 }
 
-export function receiptsListHref(
-  scope: ReceiptsListScope,
-  profile?: string
-): string {
-  const params = receiptsScopeParams(scope, profile);
+export function receiptsListHref(scope: ReceiptsListScope): string {
+  const params = receiptsScopeParams(scope);
   if (scope.kind === "recent") params.delete("sales");
   const qs = params.toString();
   return qs ? `/receipts?${qs}` : "/receipts";
 }
 
-export function receiptsExportHref(
-  scope: ReceiptsListScope,
-  profile?: string
-): string {
-  const params = receiptsScopeParams(scope, profile);
+export function receiptsExportHref(scope: ReceiptsListScope): string {
+  const params = receiptsScopeParams(scope);
   const qs = params.toString();
   return qs ? `/receipts/export?${qs}` : "/receipts/export";
 }

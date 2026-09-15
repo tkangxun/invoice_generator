@@ -71,17 +71,12 @@ async function ensureDefaults() {
       });
       console.log(`Created default admin ${email}`);
     }
-    if ((await prisma.item.count()) === 0) {
-      await prisma.item.createMany({
-        data: defaultItems.map((item, sortOrder) => ({ ...item, sortOrder })),
-      });
-      console.log(`Created default price list (${defaultItems.length} items)`);
-    }
-    if ((await prisma.companySettings.count()) === 0) {
-      await prisma.companySettings.create({
+    let company = await prisma.company.findFirst({ orderBy: { name: "asc" } });
+    if (!company) {
+      company = await prisma.company.create({
         data: {
+          code: "alpha-vitality",
           name: "Alpha Vitality",
-          active: true,
           brand: "Alpha Vitality",
           tagline: "Personalised Health Optimisation",
           legalName: "Alpha Sales & Marketing",
@@ -90,16 +85,49 @@ async function ensureDefaults() {
           paymentTerms: "Due on receipt",
         },
       });
-      console.log("Created default invoice settings");
+      console.log("Created default company alpha-vitality");
     }
-    if ((await prisma.paymentMethod.count()) === 0) {
+    const orphanUsers = await prisma.user.findMany({
+      where: { memberships: { none: {} } },
+      select: { id: true, role: true },
+    });
+    if (orphanUsers.length) {
+      const companies = await prisma.company.findMany({ select: { id: true } });
+      for (const user of orphanUsers) {
+        await prisma.companyMembership.create({
+          data: { userId: user.id, companyId: company.id },
+        });
+        if (user.role === "ADMIN") {
+          for (const row of companies) {
+            if (row.id === company.id) continue;
+            await prisma.companyMembership.create({
+              data: { userId: user.id, companyId: row.id },
+            });
+          }
+        }
+      }
+    }
+    if ((await prisma.item.count()) === 0) {
+      await prisma.item.createMany({
+        data: defaultItems.map((item, sortOrder) => ({
+          ...item,
+          sortOrder,
+          companyId: company.id,
+        })),
+      });
+      console.log(`Created default price list (${defaultItems.length} items)`);
+    }
+    if (
+      (await prisma.paymentMethod.count({ where: { companyId: company.id } })) ===
+      0
+    ) {
       await prisma.paymentMethod.createMany({
         data: [
-          { name: "Cash", sortOrder: 0 },
-          { name: "PayNow", sortOrder: 1 },
-          { name: "Bank Transfer", sortOrder: 2 },
-          { name: "Credit Card", sortOrder: 3 },
-          { name: "Cheque", sortOrder: 4 },
+          { name: "Cash", sortOrder: 0, companyId: company.id },
+          { name: "PayNow", sortOrder: 1, companyId: company.id },
+          { name: "Bank Transfer", sortOrder: 2, companyId: company.id },
+          { name: "Credit Card", sortOrder: 3, companyId: company.id },
+          { name: "Cheque", sortOrder: 4, companyId: company.id },
         ],
       });
       console.log("Created default payment methods");

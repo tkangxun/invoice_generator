@@ -65,8 +65,19 @@ async function main() {
     );
   }
 
+  let company = await prisma.company.findFirst({ orderBy: { name: "asc" } });
+  if (!company) {
+    company = await prisma.company.create({
+      data: {
+        code: "alpha-vitality",
+        name: COMPANY_DEFAULTS.brand,
+        ...COMPANY_DEFAULTS,
+      },
+    });
+  }
+
   for (const u of users) {
-    await prisma.user.upsert({
+    const user = await prisma.user.upsert({
       where: { email: u.email },
       update: {},
       create: {
@@ -76,33 +87,49 @@ async function main() {
         passwordHash: await bcrypt.hash(u.password, 10),
       },
     });
-  }
-
-  // Replace the whole price list (safe: line items keep their own description/price copies)
-  await prisma.item.deleteMany();
-  for (const [sortOrder, item] of defaultItems.entries()) {
-    await prisma.item.create({ data: { ...item, sortOrder } });
-  }
-
-  if ((await prisma.companySettings.count()) === 0) {
-    await prisma.companySettings.create({
-      data: {
-        name: COMPANY_DEFAULTS.brand,
-        active: true,
-        ...COMPANY_DEFAULTS,
+    await prisma.companyMembership.upsert({
+      where: {
+        userId_companyId: { userId: user.id, companyId: company.id },
       },
+      create: { userId: user.id, companyId: company.id },
+      update: {},
+    });
+    if (u.role === "ADMIN") {
+      const companies = await prisma.company.findMany({ select: { id: true } });
+      for (const row of companies) {
+        await prisma.companyMembership.upsert({
+          where: {
+            userId_companyId: { userId: user.id, companyId: row.id },
+          },
+          create: { userId: user.id, companyId: row.id },
+          update: {},
+        });
+      }
+    }
+  }
+
+  await prisma.item.deleteMany({ where: { companyId: company.id } });
+  for (const [sortOrder, item] of defaultItems.entries()) {
+    await prisma.item.create({
+      data: { ...item, sortOrder, companyId: company.id },
     });
   }
-  await prisma.paymentMethod.createMany({
-    data: DEFAULT_PAYMENT_METHODS.map((name, sortOrder) => ({
-      name,
-      sortOrder,
-    })),
-    skipDuplicates: true,
-  });
+
+  if (
+    (await prisma.paymentMethod.count({ where: { companyId: company.id } })) ===
+    0
+  ) {
+    await prisma.paymentMethod.createMany({
+      data: DEFAULT_PAYMENT_METHODS.map((name, sortOrder) => ({
+        name,
+        sortOrder,
+        companyId: company.id,
+      })),
+    });
+  }
 
   console.log(
-    `Seed complete: ${users.length} users, ${defaultItems.length} items, invoice settings.`
+    `Seed complete: ${users.length} users, ${defaultItems.length} items, company ${company.code}.`
   );
 }
 

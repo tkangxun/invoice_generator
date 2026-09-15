@@ -1,7 +1,7 @@
 /* eslint-disable @next/next/no-img-element */
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/db";
-import { requireUser } from "@/lib/session";
+import { canAccessInvoice, requireUser } from "@/lib/session";
 import { formatCents, formatDate } from "@/lib/money";
 import { getCompany } from "@/lib/company";
 import { PrintButton } from "@/components/PrintButton";
@@ -28,9 +28,9 @@ export default async function PrintInvoicePage({
     },
   });
   if (!invoice) notFound();
-  if (user.role !== "ADMIN" && invoice.userId !== user.userId) notFound();
+  if (!canAccessInvoice(user, invoice)) notFound();
   const creditNotes = supplementCreditSummary(invoice.lines);
-  const company = await getCompany(invoice.profileId);
+  const company = await getCompany(invoice.companyId);
 
   return (
     <div className="min-h-screen bg-gray-100 py-8 print:bg-white print:py-0">

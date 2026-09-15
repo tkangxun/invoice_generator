@@ -22,6 +22,15 @@ export default function LoginPage() {
           className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm"
         >
           <label className="block text-sm font-medium text-gray-700">
+            Company ID
+            <input
+              name="company"
+              required
+              autoComplete="organization"
+              className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
+            />
+          </label>
+          <label className="mt-4 block text-sm font-medium text-gray-700">
             Email
             <input
               type="email"

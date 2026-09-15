@@ -6,9 +6,10 @@ import { priceListToCsv } from "@/lib/price-list-csv";
 import { ITEM_ORDER_BY } from "@/lib/item-order";
 
 export async function GET() {
-  await requireAdmin();
+  const admin = await requireAdmin();
 
   const items = await prisma.item.findMany({
+    where: { companyId: admin.companyId },
     orderBy: ITEM_ORDER_BY,
   });
 

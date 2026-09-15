@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/db";
-import { requireUser } from "@/lib/session";
+import { canAccessInvoice, requireUser } from "@/lib/session";
 import { formatCents, formatDateShort } from "@/lib/money";
 import { deleteVoidedInvoice } from "@/lib/actions/invoices";
 import { VoidInvoiceForm } from "@/components/VoidInvoiceForm";
@@ -20,8 +20,6 @@ import {
   supplementCreditSummary,
 } from "@/lib/supplements";
 import { getActivePaymentMethods } from "@/lib/payment-methods";
-import { invoiceProfileLabel } from "@/lib/company";
-import { invoiceListHref } from "@/lib/invoice-list";
 
 export default async function InvoiceDetailPage({
   params,
@@ -37,14 +35,15 @@ export default async function InvoiceDetailPage({
       lines: { include: { item: { select: { type: true } } } },
       receipts: { orderBy: { paidAt: "asc" } },
       createdBy: { select: { name: true } },
-      profile: { select: { id: true, name: true } },
     },
   });
   if (!invoice) notFound();
-  if (user.role !== "ADMIN" && invoice.userId !== user.userId) notFound();
+  if (!canAccessInvoice(user, invoice)) notFound();
 
   const visibleTo =
-    user.role === "ADMIN" ? {} : { userId: user.userId };
+    user.role === "ADMIN"
+      ? { companyId: user.companyId }
+      : { companyId: user.companyId, userId: user.userId };
   const [previousInvoice, nextInvoice, paymentMethods] = await Promise.all([
     prisma.invoice.findFirst({
       where: { ...visibleTo, number: { lt: invoice.number } },
@@ -56,7 +55,7 @@ export default async function InvoiceDetailPage({
       orderBy: { number: "asc" },
       select: { id: true, number: true },
     }),
-    getActivePaymentMethods(),
+    getActivePaymentMethods(user.companyId),
   ]);
 
   const paid = paidCents(invoice.receipts);
@@ -112,19 +111,10 @@ export default async function InvoiceDetailPage({
               : "upon receipt"}
           </p>
           <p className="mt-1 text-sm text-gray-500">
-            Profile{" "}
-            {user.role === "ADMIN" && invoice.profileId ? (
-              <Link
-                href={invoiceListHref({ profile: invoice.profileId })}
-                className="font-medium text-blue-700 hover:underline"
-              >
-                {invoiceProfileLabel(invoice)}
-              </Link>
-            ) : (
-              <span className="font-medium text-gray-700">
-                {invoiceProfileLabel(invoice)}
-              </span>
-            )}
+            Company{" "}
+            <span className="font-medium text-gray-700">
+              {invoice.companyName || user.companyName}
+            </span>
           </p>
           {invoice.status === "VOIDED" && invoice.voidReason && (
             <p className="mt-2 text-sm text-red-800">

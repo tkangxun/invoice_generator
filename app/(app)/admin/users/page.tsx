@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { prisma } from "@/lib/db";
-import { requireAdmin } from "@/lib/session";
+import { membersWhere, requireAdmin } from "@/lib/session";
 import {
   createUser,
   deleteUser,
@@ -39,21 +39,30 @@ function usersHref(opts: { status?: string; error?: string } = {}) {
 export default async function AdminUsersPage({
   searchParams,
 }: {
-  searchParams: Promise<{ error?: string; status?: string }>;
+  searchParams: Promise<{ error?: string; status?: string; added?: string }>;
 }) {
   const user = await requireAdmin();
-  const { error, status: statusParam } = await searchParams;
+  const { error, status: statusParam, added } = await searchParams;
   const statusFilter = parseUserStatus(statusParam);
 
   const users = await prisma.user.findMany({
-    where:
-      statusFilter === "active"
+    where: {
+      ...membersWhere(user.companyId),
+      ...(statusFilter === "active"
         ? { active: true }
         : statusFilter === "disabled"
           ? { active: false }
-          : undefined,
+          : {}),
+    },
     orderBy: [{ active: "desc" }, { name: "asc" }],
-    include: { _count: { select: { invoices: true } } },
+    include: {
+      _count: {
+        select: {
+          invoices: { where: { companyId: user.companyId } },
+          memberships: true,
+        },
+      },
+    },
   });
 
   return (
@@ -61,7 +70,8 @@ export default async function AdminUsersPage({
       <h1 className="text-xl font-bold">Users</h1>
       <p className="mt-1 text-sm text-gray-500">
         Disabled users can&apos;t log in; their invoices and receipts are kept.
-        Users with invoices or receipts can be disabled, not deleted.
+        Users with invoices or receipts can be disabled, not deleted. Salespeople
+        belong to this company only. Admins can be added to more companies.
       </p>
 
       <div className="mt-6 flex overflow-hidden rounded-lg border border-gray-200 w-fit">
@@ -88,6 +98,16 @@ export default async function AdminUsersPage({
         {error === "email-exists" && (
           <p className="mt-2 text-sm text-red-600">
             A user with that email already exists.
+          </p>
+        )}
+        {error === "sales-other-company" && (
+          <p className="mt-2 text-sm text-red-600">
+            That salesperson already belongs to another company.
+          </p>
+        )}
+        {added && (
+          <p className="mt-2 text-sm text-green-700">
+            That account was added to this company.
           </p>
         )}
         {error === "invalid" && (
@@ -222,10 +242,16 @@ export default async function AdminUsersPage({
                             />
                           )}
                           <ConfirmSubmitButton
-                            confirmMessage={`Permanently delete ${u.name}? They must have no invoices or receipts. This cannot be undone.`}
+                            confirmMessage={
+                              u.role === "ADMIN" && u._count.memberships > 1
+                                ? `Remove ${u.name} from this company? They will keep access to their other companies.`
+                                : `Permanently delete ${u.name}? They must have no invoices or receipts. This cannot be undone.`
+                            }
                             className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50"
                           >
-                            Delete
+                            {u.role === "ADMIN" && u._count.memberships > 1
+                              ? "Remove"
+                              : "Delete"}
                           </ConfirmSubmitButton>
                         </form>
                       </>

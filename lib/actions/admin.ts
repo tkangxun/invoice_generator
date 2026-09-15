@@ -4,18 +4,32 @@ import bcrypt from "bcryptjs";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/db";
-import { requireAdmin } from "@/lib/session";
+import { requireAdmin, type AuthedUser } from "@/lib/session";
 import { dollarsToCents } from "@/lib/money";
 import { paidCents, statusFromPaid } from "@/lib/payments";
 import { isFollowUpInvoiceNumber, isReceiptNumber } from "@/lib/docs";
-import { COMPANY_DEFAULTS } from "@/lib/company";
+import { COMPANY_DEFAULTS, uniqueCompanyName } from "@/lib/company";
+import { uniqueCompanyCode } from "@/lib/company-code";
 import { parsePriceListCsv } from "@/lib/price-list-csv";
 import { ITEM_ORDER_BY } from "@/lib/item-order";
+import { DEFAULT_PAYMENT_METHODS } from "@/lib/payment-methods";
+
+async function companyItem(admin: AuthedUser, itemId: string) {
+  return prisma.item.findFirst({
+    where: { id: itemId, companyId: admin.companyId },
+  });
+}
+
+function revalidatePriceList() {
+  revalidatePath("/admin/items");
+  revalidatePath("/invoices/new");
+  revalidatePath("/invoices", "layout");
+}
 
 // ---------- Price list ----------
 
 export async function createItem(formData: FormData) {
-  await requireAdmin();
+  const admin = await requireAdmin();
   const name = String(formData.get("name") ?? "").trim();
   const price = String(formData.get("price") ?? "");
   const type = String(formData.get("type") ?? "service");
@@ -23,6 +37,7 @@ export async function createItem(formData: FormData) {
   if (!name || !price) return;
 
   const last = await prisma.item.findFirst({
+    where: { companyId: admin.companyId },
     orderBy: { sortOrder: "desc" },
     select: { sortOrder: true },
   });
@@ -33,14 +48,16 @@ export async function createItem(formData: FormData) {
       type,
       includes: includes || null,
       sortOrder: (last?.sortOrder ?? -1) + 1,
+      companyId: admin.companyId,
     },
   });
-  revalidatePath("/admin/items");
-  revalidatePath("/invoices/new");
+  revalidatePriceList();
 }
 
 export async function updateItem(itemId: string, formData: FormData) {
-  await requireAdmin();
+  const admin = await requireAdmin();
+  const item = await companyItem(admin, itemId);
+  if (!item) return;
   const name = String(formData.get("name") ?? "").trim();
   const price = String(formData.get("price") ?? "");
   const type = String(formData.get("type") ?? "service");
@@ -56,34 +73,32 @@ export async function updateItem(itemId: string, formData: FormData) {
       includes: includes || null,
     },
   });
-  revalidatePath("/admin/items");
-  revalidatePath("/invoices/new");
+  revalidatePriceList();
 }
 
 export async function toggleItemActive(itemId: string) {
-  await requireAdmin();
-  const item = await prisma.item.findUnique({ where: { id: itemId } });
+  const admin = await requireAdmin();
+  const item = await companyItem(admin, itemId);
   if (!item) return;
   await prisma.item.update({
     where: { id: itemId },
     data: { active: !item.active },
   });
-  revalidatePath("/admin/items");
-  revalidatePath("/invoices/new");
+  revalidatePriceList();
 }
 
 export async function deleteItem(itemId: string) {
-  await requireAdmin();
-  const item = await prisma.item.findUnique({ where: { id: itemId } });
+  const admin = await requireAdmin();
+  const item = await companyItem(admin, itemId);
   if (!item) return;
   await prisma.item.delete({ where: { id: itemId } });
-  revalidatePath("/admin/items");
-  revalidatePath("/invoices/new");
+  revalidatePriceList();
 }
 
 export async function moveItem(itemId: string, direction: "up" | "down") {
-  await requireAdmin();
+  const admin = await requireAdmin();
   const items = await prisma.item.findMany({
+    where: { companyId: admin.companyId },
     orderBy: ITEM_ORDER_BY,
     select: { id: true },
   });
@@ -100,8 +115,7 @@ export async function moveItem(itemId: string, direction: "up" | "down") {
       prisma.item.update({ where: { id: item.id }, data: { sortOrder } })
     )
   );
-  revalidatePath("/admin/items");
-  revalidatePath("/invoices", "layout");
+  revalidatePriceList();
 }
 
 export type ImportPriceListState = {
@@ -117,7 +131,7 @@ export async function importPriceList(
   _prev: ImportPriceListState,
   formData: FormData
 ): Promise<ImportPriceListState> {
-  await requireAdmin();
+  const admin = await requireAdmin();
   const file = formData.get("file");
   if (
     !file ||
@@ -143,6 +157,7 @@ export async function importPriceList(
   }
 
   const existing = await prisma.item.findMany({
+    where: { companyId: admin.companyId },
     select: { id: true, sku: true },
   });
   const existingIds = new Set(existing.map((item) => item.id));
@@ -164,9 +179,7 @@ export async function importPriceList(
     const fromId = item.id ? byId.get(item.id) : undefined;
     const fromSku = item.sku ? bySku.get(item.sku.toLowerCase()) : undefined;
     if (fromId && fromSku && fromId.id !== fromSku.id) {
-      matchErrors.push(
-        `Row ${line}: id and sku point to different items.`
-      );
+      matchErrors.push(`Row ${line}: id and sku point to different items.`);
       continue;
     }
     const target = fromId ?? fromSku;
@@ -200,6 +213,7 @@ export async function importPriceList(
 
   await prisma.$transaction(async (tx) => {
     const last = await tx.item.findFirst({
+      where: { companyId: admin.companyId },
       orderBy: { sortOrder: "desc" },
       select: { sortOrder: true },
     });
@@ -227,9 +241,15 @@ export async function importPriceList(
         appliedIds.push(plan.id);
         updated += 1;
       } else {
+        const idTaken = plan.id
+          ? await tx.item.findUnique({
+              where: { id: plan.id },
+              select: { id: true },
+            })
+          : null;
         const createdItem = await tx.item.create({
           data: {
-            ...(plan.id ? { id: plan.id } : {}),
+            ...(plan.id && !idTaken ? { id: plan.id } : {}),
             name: item.name,
             priceCents: item.priceCents,
             type: item.type,
@@ -239,6 +259,7 @@ export async function importPriceList(
             sku: item.sku,
             active: item.active,
             sortOrder: isFullReorder ? index : nextOrder++,
+            companyId: admin.companyId,
           },
         });
         appliedIds.push(createdItem.id);
@@ -254,7 +275,7 @@ export async function importPriceList(
         });
       }
       const rest = await tx.item.findMany({
-        where: { id: { notIn: appliedIds } },
+        where: { companyId: admin.companyId, id: { notIn: appliedIds } },
         orderBy: ITEM_ORDER_BY,
         select: { id: true },
       });
@@ -267,30 +288,69 @@ export async function importPriceList(
     }
   });
 
-  revalidatePath("/admin/items");
-  revalidatePath("/invoices/new");
+  revalidatePriceList();
   return { created, updated };
 }
 
 // ---------- Users ----------
 
 export async function createUser(formData: FormData) {
-  await requireAdmin();
+  const admin = await requireAdmin();
   const name = String(formData.get("name") ?? "").trim();
   const email = String(formData.get("email") ?? "").trim().toLowerCase();
   const password = String(formData.get("password") ?? "");
-  const role = String(formData.get("role") ?? "SALES") === "ADMIN" ? "ADMIN" : "SALES";
+  const role =
+    String(formData.get("role") ?? "SALES") === "ADMIN" ? "ADMIN" : "SALES";
   if (!name || !email || password.length < 6) {
     redirect("/admin/users?error=invalid");
   }
 
   const existing = await prisma.user.findUnique({ where: { email } });
   if (existing) {
+    if (role === "ADMIN" && existing.role === "ADMIN") {
+      await prisma.companyMembership.upsert({
+        where: {
+          userId_companyId: {
+            userId: existing.id,
+            companyId: admin.companyId,
+          },
+        },
+        create: { userId: existing.id, companyId: admin.companyId },
+        update: {},
+      });
+      revalidatePath("/admin/users");
+      redirect("/admin/users?added=1");
+    }
+    if (role === "SALES" && existing.role === "SALES") {
+      const memberships = await prisma.companyMembership.findMany({
+        where: { userId: existing.id },
+        select: { companyId: true },
+      });
+      if (memberships.some((row) => row.companyId === admin.companyId)) {
+        redirect("/admin/users?error=email-exists");
+      }
+      if (memberships.length > 0) {
+        redirect("/admin/users?error=sales-other-company");
+      }
+      await prisma.companyMembership.create({
+        data: { userId: existing.id, companyId: admin.companyId },
+      });
+      revalidatePath("/admin/users");
+      redirect("/admin/users?added=1");
+    }
     redirect("/admin/users?error=email-exists");
   }
 
-  await prisma.user.create({
-    data: { name, email, role, passwordHash: await bcrypt.hash(password, 10) },
+  const created = await prisma.user.create({
+    data: {
+      name,
+      email,
+      role,
+      passwordHash: await bcrypt.hash(password, 10),
+    },
+  });
+  await prisma.companyMembership.create({
+    data: { userId: created.id, companyId: admin.companyId },
   });
   revalidatePath("/admin/users");
   redirect("/admin/users");
@@ -311,9 +371,18 @@ function userListStatus(formData: FormData) {
   return status === "active" || status === "disabled" ? status : "";
 }
 
+async function memberOfCurrentCompany(admin: AuthedUser, userId: string) {
+  return prisma.companyMembership.findUnique({
+    where: {
+      userId_companyId: { userId, companyId: admin.companyId },
+    },
+  });
+}
+
 export async function toggleUserActive(userId: string) {
   const admin = await requireAdmin();
-  if (userId === admin.userId) return; // can't disable yourself
+  if (userId === admin.userId) return;
+  if (!(await memberOfCurrentCompany(admin, userId))) return;
   const user = await prisma.user.findUnique({ where: { id: userId } });
   if (!user) return;
   await prisma.user.update({
@@ -329,12 +398,25 @@ export async function deleteUser(userId: string, formData: FormData) {
   if (userId === admin.userId) {
     redirect(adminUsersPath({ status, error: "self" }));
   }
+  if (!(await memberOfCurrentCompany(admin, userId))) return;
 
   const target = await prisma.user.findUnique({
     where: { id: userId },
-    include: { _count: { select: { invoices: true, receipts: true } } },
+    include: {
+      _count: { select: { invoices: true, receipts: true, memberships: true } },
+    },
   });
   if (!target) return;
+
+  if (target.role === "ADMIN" && target._count.memberships > 1) {
+    await prisma.companyMembership.delete({
+      where: {
+        userId_companyId: { userId, companyId: admin.companyId },
+      },
+    });
+    revalidatePath("/admin/users");
+    redirect(adminUsersPath({ status }));
+  }
 
   if (target._count.invoices > 0 || target._count.receipts > 0) {
     redirect(adminUsersPath({ status, error: "has-records" }));
@@ -346,7 +428,8 @@ export async function deleteUser(userId: string, formData: FormData) {
 }
 
 export async function resetUserPassword(userId: string, formData: FormData) {
-  await requireAdmin();
+  const admin = await requireAdmin();
+  if (!(await memberOfCurrentCompany(admin, userId))) return;
   const password = String(formData.get("password") ?? "");
   if (password.length < 6) {
     redirect("/admin/users?error=invalid");
@@ -358,26 +441,157 @@ export async function resetUserPassword(userId: string, formData: FormData) {
   revalidatePath("/admin/users");
 }
 
+export async function grantAdmin(formData: FormData) {
+  const admin = await requireAdmin();
+  const email = String(formData.get("email") ?? "").trim().toLowerCase();
+  if (!email) redirect("/admin/companies?error=invalid");
+  const target = await prisma.user.findUnique({ where: { email } });
+  if (!target || target.role !== "ADMIN") {
+    redirect("/admin/companies?error=admin-not-found");
+  }
+  await prisma.companyMembership.upsert({
+    where: {
+      userId_companyId: { userId: target.id, companyId: admin.companyId },
+    },
+    create: { userId: target.id, companyId: admin.companyId },
+    update: {},
+  });
+  revalidatePath("/admin/companies");
+  revalidatePath("/admin/users");
+  redirect("/admin/companies");
+}
+
+export async function revokeAdmin(userId: string) {
+  const admin = await requireAdmin();
+  if (userId === admin.userId) {
+    redirect("/admin/companies?error=self");
+  }
+  const membership = await prisma.companyMembership.findUnique({
+    where: { userId_companyId: { userId, companyId: admin.companyId } },
+  });
+  if (!membership) return;
+  const remainingAdmins = await prisma.companyMembership.count({
+    where: {
+      companyId: admin.companyId,
+      user: { role: "ADMIN" },
+      userId: { not: userId },
+    },
+  });
+  if (remainingAdmins === 0) {
+    redirect("/admin/companies?error=last-admin");
+  }
+  await prisma.companyMembership.delete({
+    where: { userId_companyId: { userId, companyId: admin.companyId } },
+  });
+  revalidatePath("/admin/companies");
+  revalidatePath("/admin/users");
+}
+
+export type CreateCompanyState = { error?: string };
+
+export async function createCompany(
+  _prev: CreateCompanyState,
+  formData: FormData
+): Promise<CreateCompanyState> {
+  const admin = await requireAdmin();
+  const requestedCode = String(formData.get("code") ?? "").trim();
+  const requestedName = String(formData.get("name") ?? "").trim();
+  const copyPriceList = formData.get("copyPriceList") === "on";
+  if (!requestedCode || !requestedName) {
+    return { error: "Company ID and name are required." };
+  }
+
+  const current = await prisma.company.findUnique({
+    where: { id: admin.companyId },
+  });
+  if (!current) return { error: "Current company not found." };
+
+  const code = await uniqueCompanyCode(prisma, requestedCode);
+  const name = await uniqueCompanyName(requestedName);
+  const created = await prisma.$transaction(async (tx) => {
+    const company = await tx.company.create({
+      data: {
+        code,
+        name,
+        brand: current.brand || COMPANY_DEFAULTS.brand,
+        tagline: current.tagline || COMPANY_DEFAULTS.tagline,
+        legalName: current.legalName || COMPANY_DEFAULTS.legalName,
+        uen: current.uen || COMPANY_DEFAULTS.uen,
+        address: current.address || COMPANY_DEFAULTS.address,
+        paymentTerms: current.paymentTerms || COMPANY_DEFAULTS.paymentTerms,
+        logoMime: current.logoMime,
+        logoBytes: current.logoBytes,
+        paynowQrMime: current.paynowQrMime,
+        paynowQrBytes: current.paynowQrBytes,
+      },
+    });
+    await tx.companyMembership.create({
+      data: { userId: admin.userId, companyId: company.id },
+    });
+    const methods = await tx.paymentMethod.findMany({
+      where: { companyId: admin.companyId },
+      orderBy: { sortOrder: "asc" },
+    });
+    await tx.paymentMethod.createMany({
+      data: (methods.length
+        ? methods
+        : DEFAULT_PAYMENT_METHODS.map((methodName, sortOrder) => ({
+            name: methodName,
+            active: true,
+            sortOrder,
+          }))
+      ).map((method) => ({
+        name: method.name,
+        active: method.active,
+        sortOrder: method.sortOrder,
+        companyId: company.id,
+      })),
+    });
+    if (copyPriceList) {
+      const items = await tx.item.findMany({
+        where: { companyId: admin.companyId },
+        orderBy: ITEM_ORDER_BY,
+      });
+      if (items.length) {
+        await tx.item.createMany({
+          data: items.map((item) => ({
+            sku: item.sku,
+            name: item.name,
+            description: item.description,
+            priceCents: item.priceCents,
+            type: item.type,
+            aliases: item.aliases,
+            includes: item.includes,
+            active: item.active,
+            sortOrder: item.sortOrder,
+            companyId: company.id,
+          })),
+        });
+      }
+    }
+    return company;
+  });
+
+  revalidatePath("/admin/companies");
+  redirect(`/admin/companies?created=${encodeURIComponent(created.code)}`);
+}
+
 // ---------- Receipts ----------
 
-// Deletes a receipt and recalculates the invoice (UNPAID / PARTIAL / PAID).
 export async function deleteReceipt(receiptId: string) {
-  await requireAdmin();
+  const admin = await requireAdmin();
   const receipt = await prisma.receipt.findUnique({
     where: { id: receiptId },
     include: { invoice: { include: { receipts: true } } },
   });
-  if (!receipt) return;
+  if (!receipt || receipt.companyId !== admin.companyId) return;
 
   await prisma.$transaction(async (tx) => {
     await tx.receipt.delete({ where: { id: receiptId } });
     let remaining = receipt.invoice.receipts.filter((r) => r.id !== receiptId);
     const paid = paidCents(remaining);
     const stillPaid = paid >= receipt.invoice.totalCents;
-    if (
-      isFollowUpInvoiceNumber(receipt.number) &&
-      !stillPaid
-    ) {
+    if (isFollowUpInvoiceNumber(receipt.number) && !stillPaid) {
       const leftoverReceipts = remaining.filter((r) => isReceiptNumber(r.number));
       if (leftoverReceipts.length > 0) {
         await tx.receipt.deleteMany({
@@ -389,7 +603,10 @@ export async function deleteReceipt(receiptId: string) {
     await tx.invoice.update({
       where: { id: receipt.invoiceId },
       data: {
-        status: statusFromPaid(receipt.invoice.totalCents, paidCents(remaining)),
+        status: statusFromPaid(
+          receipt.invoice.totalCents,
+          paidCents(remaining)
+        ),
       },
     });
   });
@@ -420,19 +637,6 @@ async function readImage(formData: FormData, field: string) {
   return { mime, bytes: Buffer.from(await value.arrayBuffer()) };
 }
 
-async function uniqueProfileName(base: string, excludeId?: string) {
-  const trimmed = (base.trim() || "Profile").slice(0, 80);
-  const existing = await prisma.companySettings.findMany({
-    where: excludeId ? { id: { not: excludeId } } : undefined,
-    select: { name: true },
-  });
-  const taken = new Set(existing.map((row) => row.name.toLowerCase()));
-  if (!taken.has(trimmed.toLowerCase())) return trimmed;
-  let n = 2;
-  while (taken.has(`${trimmed} ${n}`.toLowerCase())) n += 1;
-  return `${trimmed} ${n}`;
-}
-
 function revalidateInvoiceSettings() {
   revalidatePath(SETTINGS_PATH);
   revalidatePath("/invoices");
@@ -442,18 +646,17 @@ function revalidateInvoiceSettings() {
 export async function updateCompanySettings(
   formData: FormData
 ): Promise<{ error?: string } | void> {
-  await requireAdmin();
-  const profileId = String(formData.get("profileId") ?? "").trim();
+  const admin = await requireAdmin();
   const name = String(formData.get("name") ?? "").trim();
+  const requestedCode = String(formData.get("code") ?? "").trim();
   const brand = String(formData.get("brand") ?? "").trim();
   const tagline = String(formData.get("tagline") ?? "").trim();
   const legalName = String(formData.get("legalName") ?? "").trim();
   const uen = String(formData.get("uen") ?? "").trim();
   const address = String(formData.get("address") ?? "").trim();
   const paymentTerms = String(formData.get("paymentTerms") ?? "").trim();
-  if (!profileId) return { error: "Choose a profile first." };
-  if (!name || !brand || !legalName || !uen) {
-    return { error: "Profile name, brand, legal name, and UEN are required." };
+  if (!name || !brand || !legalName || !uen || !requestedCode) {
+    return { error: "Company ID, name, brand, legal name, and UEN are required." };
   }
 
   let logo;
@@ -467,10 +670,17 @@ export async function updateCompanySettings(
     };
   }
 
-  await prisma.companySettings.update({
-    where: { id: profileId },
+  const code = await uniqueCompanyCode(
+    prisma,
+    requestedCode || name,
+    admin.companyId
+  );
+
+  await prisma.company.update({
+    where: { id: admin.companyId },
     data: {
-      name: await uniqueProfileName(name, profileId),
+      code,
+      name: await uniqueCompanyName(name, admin.companyId),
       brand,
       tagline,
       legalName,
@@ -486,95 +696,24 @@ export async function updateCompanySettings(
   revalidateInvoiceSettings();
 }
 
-export async function createCompanyProfile(formData: FormData) {
-  await requireAdmin();
-  const copyFromId = String(formData.get("copyFromId") ?? "").trim();
-  const requestedName = String(formData.get("name") ?? "").trim();
-  const source = copyFromId
-    ? await prisma.companySettings.findUnique({ where: { id: copyFromId } })
-    : null;
-  const created = await prisma.companySettings.create({
-    data: {
-      name: await uniqueProfileName(
-        requestedName || (source ? `${source.name} copy` : "New profile")
-      ),
-      active: (await prisma.companySettings.count()) === 0,
-      brand: source?.brand || COMPANY_DEFAULTS.brand,
-      tagline: source?.tagline || COMPANY_DEFAULTS.tagline,
-      legalName: source?.legalName || COMPANY_DEFAULTS.legalName,
-      uen: source?.uen || COMPANY_DEFAULTS.uen,
-      address: source?.address || COMPANY_DEFAULTS.address,
-      paymentTerms: source?.paymentTerms || COMPANY_DEFAULTS.paymentTerms,
-      logoMime: source?.logoMime,
-      logoBytes: source?.logoBytes,
-      paynowQrMime: source?.paynowQrMime,
-      paynowQrBytes: source?.paynowQrBytes,
-    },
-  });
-  revalidateInvoiceSettings();
-  redirect(`${SETTINGS_PATH}?profile=${created.id}`);
-}
-
-export async function activateCompanyProfile(profileId: string) {
-  await requireAdmin();
-  const profile = await prisma.companySettings.findUnique({
-    where: { id: profileId },
-    select: { id: true },
-  });
-  if (!profile) return;
-  await prisma.$transaction([
-    prisma.companySettings.updateMany({ data: { active: false } }),
-    prisma.companySettings.update({
-      where: { id: profileId },
-      data: { active: true },
-    }),
-  ]);
-  revalidateInvoiceSettings();
-}
-
-export async function deleteCompanyProfile(profileId: string) {
-  await requireAdmin();
-  const remaining = await prisma.companySettings.count({
-    where: { id: { not: profileId } },
-  });
-  if (remaining === 0) return;
-  const current = await prisma.companySettings.findUnique({
-    where: { id: profileId },
-    select: { active: true },
-  });
-  if (!current) return;
-  if (current.active) {
-    const next = await prisma.companySettings.findFirst({
-      where: { id: { not: profileId } },
-      orderBy: { name: "asc" },
-      select: { id: true },
-    });
-    await prisma.$transaction([
-      prisma.companySettings.updateMany({ data: { active: false } }),
-      prisma.companySettings.update({
-        where: { id: next!.id },
-        data: { active: true },
-      }),
-      prisma.companySettings.delete({ where: { id: profileId } }),
-    ]);
-  } else {
-    await prisma.companySettings.delete({ where: { id: profileId } });
-  }
-  revalidateInvoiceSettings();
-  redirect(SETTINGS_PATH);
-}
-
 export async function createPaymentMethod(formData: FormData) {
-  await requireAdmin();
+  const admin = await requireAdmin();
   const name = String(formData.get("name") ?? "").trim();
   if (!name) return;
   const last = await prisma.paymentMethod.findFirst({
+    where: { companyId: admin.companyId },
     orderBy: { sortOrder: "desc" },
     select: { sortOrder: true },
   });
   await prisma.paymentMethod.upsert({
-    where: { name },
-    create: { name, sortOrder: (last?.sortOrder ?? -1) + 1 },
+    where: {
+      companyId_name: { companyId: admin.companyId, name },
+    },
+    create: {
+      name,
+      sortOrder: (last?.sortOrder ?? -1) + 1,
+      companyId: admin.companyId,
+    },
     update: { active: true },
   });
   revalidatePath(SETTINGS_PATH);
@@ -582,14 +721,14 @@ export async function createPaymentMethod(formData: FormData) {
 }
 
 export async function togglePaymentMethod(methodId: string) {
-  await requireAdmin();
-  const method = await prisma.paymentMethod.findUnique({
-    where: { id: methodId },
+  const admin = await requireAdmin();
+  const method = await prisma.paymentMethod.findFirst({
+    where: { id: methodId, companyId: admin.companyId },
   });
   if (!method) return;
   if (method.active) {
     const activeCount = await prisma.paymentMethod.count({
-      where: { active: true },
+      where: { companyId: admin.companyId, active: true },
     });
     if (activeCount <= 1) return;
   }
@@ -602,9 +741,13 @@ export async function togglePaymentMethod(methodId: string) {
 }
 
 export async function deletePaymentMethod(methodId: string) {
-  await requireAdmin();
+  const admin = await requireAdmin();
+  const method = await prisma.paymentMethod.findFirst({
+    where: { id: methodId, companyId: admin.companyId },
+  });
+  if (!method) return;
   const remaining = await prisma.paymentMethod.count({
-    where: { id: { not: methodId } },
+    where: { companyId: admin.companyId, id: { not: methodId } },
   });
   if (remaining === 0) return;
   await prisma.paymentMethod.delete({ where: { id: methodId } });

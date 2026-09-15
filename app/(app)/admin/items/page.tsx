@@ -15,9 +15,10 @@ const inputCls =
   "w-full rounded-lg border border-gray-300 px-2 py-1.5 text-sm focus:border-blue-500 focus:outline-none";
 
 export default async function AdminItemsPage() {
-  await requireAdmin();
+  const admin = await requireAdmin();
 
   const items = await prisma.item.findMany({
+    where: { companyId: admin.companyId },
     orderBy: ITEM_ORDER_BY,
     include: { _count: { select: { lines: true } } },
   });

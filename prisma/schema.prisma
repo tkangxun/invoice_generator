@@ -8,20 +8,54 @@ datasource db {
 }
 
 model User {
-  id           String    @id @default(cuid())
-  email        String    @unique
+  id           String               @id @default(cuid())
+  email        String               @unique
   name         String
   passwordHash String
-  role         String    @default("SALES") // SALES | ADMIN
-  active       Boolean   @default(true)
-  createdAt    DateTime  @default(now())
+  role         String               @default("SALES") // SALES | ADMIN
+  active       Boolean              @default(true)
+  createdAt    DateTime             @default(now())
   invoices     Invoice[]
   receipts     Receipt[]
+  memberships  CompanyMembership[]
+}
+
+model CompanyMembership {
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String
+  company   Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  companyId String
+  createdAt DateTime @default(now())
+
+  @@id([userId, companyId])
+  @@index([companyId])
+}
+
+model Company {
+  id             String               @id @default(cuid())
+  code           String               @unique
+  name           String               @unique
+  brand          String
+  tagline        String
+  legalName      String
+  uen            String
+  address        String
+  paymentTerms   String
+  logoMime       String?
+  logoBytes      Bytes?
+  paynowQrMime   String?
+  paynowQrBytes  Bytes?
+  updatedAt      DateTime             @updatedAt
+  memberships    CompanyMembership[]
+  items          Item[]
+  invoices       Invoice[]
+  receipts       Receipt[]
+  paymentMethods PaymentMethod[]
 }
 
 model Item {
   id          String        @id @default(cuid())
-  sku         String?       @unique
+  sku         String?
   name        String
   description String?
   // Prices stored in cents to avoid floating-point errors
@@ -35,10 +69,15 @@ model Item {
   active      Boolean       @default(true)
   sortOrder   Int           @default(0)
   createdAt   DateTime      @default(now())
+  company     Company       @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  companyId   String
   lines       InvoiceLine[]
+
+  @@unique([companyId, sku])
+  @@index([companyId, sortOrder])
 }
 
-// Sequential document numbering, keyed per document type and year (e.g. "INV-2026")
+// Sequential document numbering, keyed per company, document type, and year
 model Counter {
   id    String @id
   value Int    @default(0)
@@ -46,7 +85,7 @@ model Counter {
 
 model Invoice {
   id              String        @id @default(cuid())
-  number          String        @unique
+  number          String
   status          String        @default("UNPAID") // UNPAID | PARTIAL | PAID | VOIDED
   customerName    String
   customerAddress String?
@@ -64,15 +103,16 @@ model Invoice {
   voidedAt        DateTime?
   createdBy       User          @relation(fields: [userId], references: [id])
   userId          String
-  profile         CompanySettings? @relation(fields: [profileId], references: [id], onDelete: SetNull)
-  profileId       String?
-  profileName     String?
+  company         Company       @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  companyId       String
+  companyName     String?
   lines           InvoiceLine[]
   receipts        Receipt[]
 
+  @@unique([companyId, number])
   @@index([userId, issuedAt])
   @@index([status])
-  @@index([profileId])
+  @@index([companyId, issuedAt])
 }
 
 model InvoiceLine {
@@ -92,9 +132,11 @@ model InvoiceLine {
 
 model Receipt {
   id            String   @id @default(cuid())
-  number        String   @unique
+  number        String
   invoice       Invoice  @relation(fields: [invoiceId], references: [id])
   invoiceId     String
+  company       Company  @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  companyId     String
   paymentMethod String
   amountCents   Int
   notes         String?
@@ -102,33 +144,20 @@ model Receipt {
   recordedBy    User     @relation(fields: [userId], references: [id])
   userId        String
 
+  @@unique([companyId, number])
   @@index([paidAt])
   @@index([invoiceId])
-}
-
-model CompanySettings {
-  id            String   @id @default(cuid())
-  name          String   @unique
-  active        Boolean  @default(false)
-  brand         String
-  tagline       String
-  legalName     String
-  uen           String
-  address       String
-  paymentTerms  String
-  logoMime      String?
-  logoBytes     Bytes?
-  paynowQrMime  String?
-  paynowQrBytes Bytes?
-  updatedAt     DateTime @updatedAt
-  invoices      Invoice[]
-
-  @@index([active])
+  @@index([companyId])
 }
 
 model PaymentMethod {
   id        String  @id @default(cuid())
-  name      String  @unique
+  name      String
   active    Boolean @default(true)
   sortOrder Int     @default(0)
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  companyId String
+
+  @@unique([companyId, name])
+  @@index([companyId, sortOrder])
 }

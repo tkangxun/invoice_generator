@@ -1,25 +1,16 @@
 import { prisma } from "@/lib/db";
 import { requireAdmin } from "@/lib/session";
-import {
-  ensureInvoiceSettings,
-  getCompany,
-  listCompanyProfiles,
-} from "@/lib/company";
+import { ensureCompanyDefaults, getCompany } from "@/lib/company";
 import { InvoiceSettingsForm } from "@/components/InvoiceSettingsForm";
 import { PaymentMethodsCard } from "@/components/PaymentMethodsCard";
 
-export default async function InvoiceSettingsPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ profile?: string }>;
-}) {
-  await requireAdmin();
-  await ensureInvoiceSettings();
-  const { profile } = await searchParams;
-  const [company, profiles, methods] = await Promise.all([
-    getCompany(profile),
-    listCompanyProfiles(),
+export default async function InvoiceSettingsPage() {
+  const admin = await requireAdmin();
+  await ensureCompanyDefaults(admin.companyId);
+  const [company, methods] = await Promise.all([
+    getCompany(admin.companyId),
     prisma.paymentMethod.findMany({
+      where: { companyId: admin.companyId },
       orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
       select: { id: true, name: true, active: true },
     }),
@@ -29,15 +20,12 @@ export default async function InvoiceSettingsPage({
     <div>
       <h1 className="text-xl font-bold">Invoice settings</h1>
       <p className="mt-1 text-sm text-gray-500">
-        Company identity on invoices. The main profile is what sales invoices
-        use. Admins can create invoices from other saved profiles.
+        Letterhead and payment methods for {company.name}. Sales invoices in
+        this company use these details. Company ID for login is{" "}
+        <span className="font-medium text-gray-700">{company.code}</span>.
       </p>
       <div className="mt-6">
-        <InvoiceSettingsForm
-          key={company.id}
-          company={company}
-          profiles={profiles}
-        />
+        <InvoiceSettingsForm key={company.id} company={company} />
       </div>
       <PaymentMethodsCard methods={methods} />
     </div>

@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/db";
-import { requireUser } from "@/lib/session";
+import { canAccessInvoice, membersWhere, requireUser } from "@/lib/session";
 import { InvoiceForm } from "@/components/InvoiceForm";
 import { toDateInput } from "@/lib/money";
 import { ITEM_ORDER_BY } from "@/lib/item-order";
@@ -19,7 +19,7 @@ export default async function EditInvoicePage({
     include: { lines: true },
   });
   if (!invoice) notFound();
-  if (user.role !== "ADMIN" && invoice.userId !== user.userId) notFound();
+  if (!canAccessInvoice(user, invoice)) notFound();
   if (invoice.status === "VOIDED") notFound();
 
   const lineItemIds = invoice.lines
@@ -30,7 +30,7 @@ export default async function EditInvoicePage({
     prisma.item.findMany({
       where: {
         OR: [
-          { active: true },
+          { companyId: user.companyId, active: true },
           ...(lineItemIds.length ? [{ id: { in: lineItemIds } }] : []),
         ],
       },
@@ -46,6 +46,7 @@ export default async function EditInvoicePage({
     }),
     user.role === "ADMIN"
       ? prisma.user.findMany({
+          where: membersWhere(user.companyId),
           orderBy: { name: "asc" },
           select: { id: true, name: true, active: true },
         })

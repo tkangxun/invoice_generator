@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/db";
-import { requireUser } from "@/lib/session";
+import { canAccessInvoice, requireUser } from "@/lib/session";
 import { paidCents } from "@/lib/payments";
 import { isFollowUpInvoiceNumber, isReceiptNumber } from "@/lib/docs";
 import { PaymentEditForm } from "@/components/PaymentEditForm";
@@ -21,7 +21,7 @@ export default async function EditPaymentPage({
     include: { receipts: true },
   });
   if (!invoice) notFound();
-  if (user.role !== "ADMIN" && invoice.userId !== user.userId) notFound();
+  if (!canAccessInvoice(user, invoice)) notFound();
   if (invoice.status === "VOIDED") notFound();
 
   const payment = invoice.receipts.find((r) => r.id === rid);
@@ -34,7 +34,7 @@ export default async function EditPaymentPage({
 
   const othersPaid = paidCents(invoice.receipts.filter((r) => r.id !== payment.id));
   const maxAmount = invoice.totalCents - othersPaid;
-  const methods = await getActivePaymentMethods();
+  const methods = await getActivePaymentMethods(user.companyId);
 
   return (
     <div>

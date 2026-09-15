@@ -22,7 +22,9 @@ export default async function DashboardPage({
 }) {
   const user = await requireUser();
   const isAdmin = user.role === "ADMIN";
-  const where = isAdmin ? {} : { userId: user.userId };
+  const where = isAdmin
+    ? { companyId: user.companyId }
+    : { companyId: user.companyId, userId: user.userId };
   const { sales: salesParam, period: periodParam } = await searchParams;
   const salesMode = parseSalesMode(salesParam);
   const salesPeriod = parseSalesPeriod(salesMode, periodParam);
@@ -31,7 +33,9 @@ export default async function DashboardPage({
   const nextPeriod = shiftSalesPeriod(salesMode, salesPeriod, 1);
   const canGoNext = canShiftSalesPeriod(salesMode, salesPeriod, 1);
 
-  const collectedWhere = isAdmin ? {} : { invoice: { userId: user.userId } };
+  const collectedWhere = isAdmin
+    ? { companyId: user.companyId }
+    : { companyId: user.companyId, invoice: { userId: user.userId } };
   const collectedRange = dateRangeForPeriod(salesMode, salesPeriod);
 
   const [invoiceCount, unpaidCount, periodHits, recent] = await Promise.all([

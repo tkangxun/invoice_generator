@@ -1,11 +1,13 @@
 import { getIronSession, SessionOptions } from "iron-session";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
+import { prisma } from "@/lib/db";
 
 export type SessionData = {
   userId?: string;
   name?: string;
   role?: string;
+  companyId?: string;
 };
 
 function sessionOptions(): SessionOptions {
@@ -41,20 +43,71 @@ export async function getSession() {
   return getIronSession<SessionData>(await cookies(), sessionOptions());
 }
 
-export type AuthedUser = { userId: string; name: string; role: string };
+export type AuthedUser = {
+  userId: string;
+  name: string;
+  role: string;
+  companyId: string;
+  companyName: string;
+  companyCode: string;
+};
+
+async function loadAuthedUser(): Promise<AuthedUser | null> {
+  const session = await getSession();
+  if (!session.userId || !session.companyId) return null;
+
+  const membership = await prisma.companyMembership.findUnique({
+    where: {
+      userId_companyId: {
+        userId: session.userId,
+        companyId: session.companyId,
+      },
+    },
+    select: {
+      company: { select: { id: true, name: true, code: true } },
+      user: { select: { id: true, name: true, role: true, active: true } },
+    },
+  });
+  if (!membership?.user.active) return null;
+
+  return {
+    userId: membership.user.id,
+    name: membership.user.name,
+    role: membership.user.role,
+    companyId: membership.company.id,
+    companyName: membership.company.name,
+    companyCode: membership.company.code,
+  };
+}
 
 export async function requireUser(): Promise<AuthedUser> {
-  const session = await getSession();
-  if (!session.userId) redirect("/login");
-  return {
-    userId: session.userId,
-    name: session.name ?? "",
-    role: session.role ?? "SALES",
-  };
+  const user = await loadAuthedUser();
+  if (!user) {
+    const session = await getSession();
+    session.destroy();
+    redirect("/login");
+  }
+  return user;
 }
 
 export async function requireAdmin(): Promise<AuthedUser> {
   const user = await requireUser();
   if (user.role !== "ADMIN") redirect("/dashboard");
   return user;
+}
+
+export function companyWhere(user: { companyId: string }) {
+  return { companyId: user.companyId };
+}
+
+export function membersWhere(companyId: string) {
+  return { memberships: { some: { companyId } } };
+}
+
+export function canAccessInvoice(
+  user: AuthedUser,
+  invoice: { companyId: string; userId: string }
+) {
+  if (invoice.companyId !== user.companyId) return false;
+  return user.role === "ADMIN" || invoice.userId === user.userId;
 }

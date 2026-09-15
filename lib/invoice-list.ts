@@ -1,11 +1,9 @@
 import { OPEN_INVOICE_STATUSES, remainingCents } from "@/lib/payments";
 import { dateRangeForPeriod, recentTwoMonthsRange } from "@/lib/sales-period";
-import { invoiceProfileLabel } from "@/lib/company";
 
 export type InvoiceSortKey =
   | "number"
   | "customer"
-  | "profile"
   | "salesperson"
   | "date"
   | "total"
@@ -22,8 +20,6 @@ type SortableInvoice = {
   status: string;
   totalCents: number;
   issuedAt: Date;
-  profileName?: string | null;
-  profile?: { name: string } | null;
   createdBy: { name: string };
   receipts: { number: string; amountCents: number }[];
 };
@@ -32,7 +28,6 @@ export function parseInvoiceSort(value?: string): InvoiceSortKey {
   switch (value) {
     case "number":
     case "customer":
-    case "profile":
     case "salesperson":
     case "date":
     case "total":
@@ -191,8 +186,6 @@ function compareInvoices(
       return a.number.localeCompare(b.number, "en", { numeric: true });
     case "customer":
       return a.customerName.localeCompare(b.customerName, "en");
-    case "profile":
-      return invoiceProfileLabel(a).localeCompare(invoiceProfileLabel(b), "en");
     case "salesperson":
       return a.createdBy.name.localeCompare(b.createdBy.name, "en");
     case "date":
@@ -217,7 +210,6 @@ export function invoiceListHref(params: {
   month?: string;
   salesperson?: string;
   voidReason?: string;
-  profile?: string;
   sort?: string;
   dir?: string;
 }): string {
@@ -227,29 +219,8 @@ export function invoiceListHref(params: {
   if (params.month) search.set("month", params.month);
   if (params.salesperson) search.set("salesperson", params.salesperson);
   if (params.voidReason) search.set("voidReason", params.voidReason);
-  if (params.profile) search.set("profile", params.profile);
   if (params.sort && params.sort !== "date") search.set("sort", params.sort);
   if (params.dir && params.dir !== "desc") search.set("dir", params.dir);
   const qs = search.toString();
   return qs ? `/invoices?${qs}` : "/invoices";
-}
-
-export const NO_INVOICE_PROFILE = "none";
-
-export function parseInvoiceProfile(
-  value: string | undefined,
-  profiles: { id: string }[]
-): string {
-  const requested = value?.trim() || "";
-  if (!requested) return "";
-  if (requested === NO_INVOICE_PROFILE) return requested;
-  return profiles.some((item) => item.id === requested) ? requested : "";
-}
-
-export function invoiceProfileWhere(
-  profile: string
-): { profileId: string | null } | undefined {
-  if (!profile) return undefined;
-  if (profile === NO_INVOICE_PROFILE) return { profileId: null };
-  return { profileId: profile };
 }

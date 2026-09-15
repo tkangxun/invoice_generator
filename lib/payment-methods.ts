@@ -8,10 +8,12 @@ export const DEFAULT_PAYMENT_METHODS = [
   "Cheque",
 ];
 
-export async function getActivePaymentMethods(): Promise<string[]> {
+export async function getActivePaymentMethods(
+  companyId: string
+): Promise<string[]> {
   try {
     const methods = await prisma.paymentMethod.findMany({
-      where: { active: true },
+      where: { companyId, active: true },
       orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
       select: { name: true },
     });

@@ -4,9 +4,10 @@ A web app for the sales team to generate invoices and receipts, and track their 
 
 ## Features
 
-- Individual login for each salesperson (admins see everyone's documents; salespeople see only their own)
-- Create invoices with items picked from a shared price list (or custom line items)
-- Auto-generated sequential numbering: `INV-2026-0001`, `RCP-2026-0001` (resets each year)
+- Login with **company ID + email + password** (one email worldwide; sales belong to one company, admins can hold several)
+- Each company has its own letterhead, price list, users, and invoice/receipt numbers
+- Create invoices from that company’s price list (or custom line items)
+- Auto-generated sequential numbering per company: `INV-2026-0001`, `RCP-2026-0001` (resets each year)
 - Record payment on an invoice to mark it paid and automatically generate the linked receipt
 - Printable A4 invoice and receipt documents (use the browser's "Save as PDF")
 - Dashboard with each salesperson's invoice count, unpaid count, and collected sales
@@ -26,13 +27,15 @@ npm run dev            # http://localhost:3000
 
 ## Demo accounts (local seed only)
 
+Company ID: `alpha-vitality`
+
 | Email             | Password | Role  |
 | ----------------- | -------- | ----- |
 | admin@example.com | admin123 | Admin |
 | alice@example.com | sales123 | Sales |
 | ben@example.com   | sales123 | Sales |
 
-Change these before real use. Production seed never creates these accounts.
+Admins who hold more than one company switch by logging out and signing in with the other company ID (there is no in-app switcher). Change these accounts before real use. Production never creates the demo emails.
 
 ## Host on Railway
 
@@ -42,28 +45,25 @@ Change these before real use. Production seed never creates these accounts.
 4. On the app service, **Variables**:
    - `DATABASE_URL` = a **reference** to the Postgres service `DATABASE_URL` (`${{Postgres.DATABASE_URL}}`)
    - `SESSION_SECRET` = a random string of at least 32 characters
-   - `ADMIN_EMAIL` / `ADMIN_PASSWORD` / `ADMIN_NAME` = the first admin account (used when you seed)
+   - `ADMIN_EMAIL` / `ADMIN_PASSWORD` / `ADMIN_NAME` = first admin, used only when the user table is empty
 5. Leave **Settings → Deploy → Pre-deploy Command** empty. Migrations run when the app starts (`npm start`).
 6. **Settings → Networking → Generate Domain**.
-7. After the first successful deploy, create the admin and price list once:
 
-   ```bash
-   npm i -g @railway/cli
-   railway login
-   railway link
-   railway run npm run db:seed
-   ```
+A brand-new empty database is bootstrapped on first start (admin, default company `alpha-vitality`, price list). **Do not run `db:seed` on Railway** — seed wipes that company’s price list.
 
-   Or in Railway: the app service → **Settings → One-off command** → `npm run db:seed`.
+After a multi-company cutover, everyone must sign in again. Company IDs are slugs of the old branding profile names, typically:
 
-The public URL will prompt you to log in with `ADMIN_EMAIL`. Change that password after first login if you want, and add salespeople under Settings → Users.
+- `alpha-vitality` (former main letterhead)
+- `event-booth`
 
-Do not seed the demo `admin@example.com` / `alice@example.com` accounts on Railway.
+Confirm the exact codes under Settings → Companies (or Invoice settings) after an admin logs in.
+
+The public URL will prompt you to log in with company ID + `ADMIN_EMAIL`. Add salespeople under Settings → Users (they can only belong to one company).
 
 ## Things to customise
 
-- **Company details** shown on invoices/receipts: `lib/company.ts`
-- **Price list**: Settings → Price list in the app, or `prisma/seed.ts`
+- **Company details** shown on invoices/receipts: Settings → Invoice, or `lib/company.ts`
+- **Price list**: Settings → Price list in the app (per company), or `prisma/seed.ts` locally
 - **Currency** (default SGD): `lib/money.ts`
 - **Invoice/receipt layout**: `app/print/invoices/[id]/page.tsx` and `app/print/receipts/[id]/page.tsx`
 
@@ -79,6 +79,6 @@ Do not seed the demo `admin@example.com` / `alice@example.com` accounts on Railw
 | --- | --- | --- |
 | `DATABASE_URL` | Yes | Postgres connection string |
 | `SESSION_SECRET` | Yes | Encrypts session cookies (min 32 characters) |
-| `ADMIN_EMAIL` | Seed only | First admin login |
-| `ADMIN_PASSWORD` | Seed only | First admin password (min 6 characters) |
-| `ADMIN_NAME` | Seed only | First admin display name (default `Admin`) |
+| `ADMIN_EMAIL` | First boot only | First admin login if the user table is empty |
+| `ADMIN_PASSWORD` | First boot only | First admin password (min 6 characters) |
+| `ADMIN_NAME` | First boot only | First admin display name (default `Admin`) |

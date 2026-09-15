@@ -3,8 +3,8 @@ import { DEFAULT_PAYMENT_METHODS } from "@/lib/payment-methods";
 
 export type CompanyInfo = {
   id: string;
+  code: string;
   name: string;
-  active: boolean;
   brand: string;
   tagline: string;
   legalName: string;
@@ -18,10 +18,10 @@ export type CompanyInfo = {
   updatedAt: string;
 };
 
-export type CompanyProfileSummary = {
+export type CompanySummary = {
   id: string;
+  code: string;
   name: string;
-  active: boolean;
 };
 
 export const COMPANY_DEFAULTS = {
@@ -47,8 +47,8 @@ function footerLine(legalName: string, uen: string, address: string) {
 
 type CompanyRow = {
   id: string;
+  code: string;
   name: string;
-  active: boolean;
   brand: string;
   tagline: string;
   legalName: string;
@@ -65,8 +65,8 @@ export function toCompanyInfo(row: CompanyRow): CompanyInfo {
   const id = encodeURIComponent(row.id);
   return {
     id: row.id,
+    code: row.code,
     name: row.name,
-    active: row.active,
     brand: row.brand,
     tagline: row.tagline,
     legalName: row.legalName,
@@ -88,8 +88,8 @@ export function toCompanyInfo(row: CompanyRow): CompanyInfo {
 export function defaultCompanyInfo(): CompanyInfo {
   return {
     id: "",
+    code: "alpha-vitality",
     name: COMPANY_DEFAULTS.brand,
-    active: false,
     ...COMPANY_DEFAULTS,
     addressLines: addressLines(COMPANY_DEFAULTS.address),
     footerLine: footerLine(
@@ -104,30 +104,8 @@ export function defaultCompanyInfo(): CompanyInfo {
 }
 
 export async function getCompanyRow(id?: string | null) {
-  if (id) {
-    const row = await prisma.companySettings.findUnique({ where: { id } });
-    if (row) return row;
-  }
-  return (
-    (await prisma.companySettings.findFirst({ where: { active: true } })) ??
-    (await prisma.companySettings.findFirst({ orderBy: { name: "asc" } }))
-  );
-}
-
-export async function getActiveProfileStamp(): Promise<{
-  profileId: string | null;
-  profileName: string | null;
-}> {
-  const row = await getCompanyRow();
-  if (!row) return { profileId: null, profileName: null };
-  return { profileId: row.id, profileName: row.name };
-}
-
-export function invoiceProfileLabel(invoice: {
-  profileName?: string | null;
-  profile?: { name: string } | null;
-}): string {
-  return invoice.profile?.name || invoice.profileName || "—";
+  if (!id) return null;
+  return prisma.company.findUnique({ where: { id } });
 }
 
 export async function getCompany(id?: string | null): Promise<CompanyInfo> {
@@ -140,42 +118,40 @@ export async function getCompany(id?: string | null): Promise<CompanyInfo> {
   }
 }
 
-export async function listCompanyProfiles(): Promise<CompanyProfileSummary[]> {
-  return prisma.companySettings.findMany({
-    orderBy: [{ active: "desc" }, { name: "asc" }],
-    select: { id: true, name: true, active: true },
+export async function listHeldCompanies(
+  userId: string
+): Promise<CompanySummary[]> {
+  const rows = await prisma.companyMembership.findMany({
+    where: { userId },
+    orderBy: { company: { name: "asc" } },
+    select: {
+      company: { select: { id: true, code: true, name: true } },
+    },
   });
+  return rows.map((row) => row.company);
 }
 
-export async function ensureInvoiceSettings() {
-  if ((await prisma.companySettings.count()) === 0) {
-    await prisma.companySettings.create({
-      data: {
-        name: COMPANY_DEFAULTS.brand,
-        active: true,
-        ...COMPANY_DEFAULTS,
-      },
-    });
-  } else if (
-    (await prisma.companySettings.count({ where: { active: true } })) === 0
-  ) {
-    const first = await prisma.companySettings.findFirst({
-      orderBy: { name: "asc" },
-      select: { id: true },
-    });
-    if (first) {
-      await prisma.companySettings.update({
-        where: { id: first.id },
-        data: { active: true },
-      });
-    }
-  }
-  if ((await prisma.paymentMethod.count()) === 0) {
+export async function ensureCompanyDefaults(companyId: string) {
+  if ((await prisma.paymentMethod.count({ where: { companyId } })) === 0) {
     await prisma.paymentMethod.createMany({
       data: DEFAULT_PAYMENT_METHODS.map((name, sortOrder) => ({
         name,
         sortOrder,
+        companyId,
       })),
     });
   }
+}
+
+export async function uniqueCompanyName(base: string, excludeId?: string) {
+  const trimmed = (base.trim() || "Company").slice(0, 80);
+  const existing = await prisma.company.findMany({
+    where: excludeId ? { id: { not: excludeId } } : undefined,
+    select: { name: true },
+  });
+  const taken = new Set(existing.map((row) => row.name.toLowerCase()));
+  if (!taken.has(trimmed.toLowerCase())) return trimmed;
+  let n = 2;
+  while (taken.has(`${trimmed} ${n}`.toLowerCase())) n += 1;
+  return `${trimmed} ${n}`;
 }

@@ -3,14 +3,18 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/db";
-import { requireAdmin, requireUser } from "@/lib/session";
+import {
+  canAccessInvoice,
+  requireAdmin,
+  requireUser,
+  type AuthedUser,
+} from "@/lib/session";
 import { nextDocNumber, nextPaymentLabel } from "@/lib/numbering";
 import { dollarsToCents, parseDateInput } from "@/lib/money";
 import { paidCents, remainingCents, statusFromPaid } from "@/lib/payments";
 import { isFollowUpInvoiceNumber, isReceiptNumber } from "@/lib/docs";
 import { parseVoidReason } from "@/lib/void-reasons";
 import type { Prisma } from "@prisma/client";
-import { getActiveProfileStamp } from "@/lib/company";
 
 async function issueSettlementReceipt(
   tx: Prisma.TransactionClient,
@@ -19,7 +23,8 @@ async function issueSettlementReceipt(
   userId: string,
   paidAt: Date,
   paymentMethod: string,
-  notes: string | null
+  notes: string | null,
+  companyId: string
 ) {
   const docs = await tx.receipt.findMany({
     where: { invoiceId },
@@ -31,8 +36,9 @@ async function issueSettlementReceipt(
 
   await tx.receipt.create({
     data: {
-      number: await nextDocNumber(tx, "RCP"),
+      number: await nextDocNumber(tx, "RCP", companyId),
       invoiceId,
+      companyId,
       paymentMethod,
       amountCents: invoiceTotalCents,
       notes,
@@ -59,20 +65,22 @@ export type CreateInvoiceInput = {
   discountCents: number;
   dueAt?: string; // yyyy-mm-dd
   userId?: string;
-  profileId?: string;
   lines: InvoiceLineInput[];
 };
 
 async function resolveInvoiceOwnerId(
-  actor: { role: string; userId: string },
+  actor: AuthedUser,
   requestedUserId?: string,
   allowInactiveId?: string
 ): Promise<{ userId: string } | { error: string }> {
   if (actor.role !== "ADMIN" || !requestedUserId) {
     return { userId: actor.userId };
   }
-  const target = await prisma.user.findUnique({
-    where: { id: requestedUserId },
+  const target = await prisma.user.findFirst({
+    where: {
+      id: requestedUserId,
+      memberships: { some: { companyId: actor.companyId } },
+    },
     select: { id: true, active: true },
   });
   if (!target) return { error: "Salesperson not found." };
@@ -82,32 +90,25 @@ async function resolveInvoiceOwnerId(
   return { userId: target.id };
 }
 
-async function resolveInvoiceProfile(
-  actor: { role: string },
-  requestedProfileId?: string
-): Promise<
-  | { profileId: string | null; profileName: string | null }
-  | { error: string }
-> {
-  const main = await getActiveProfileStamp();
-  if (actor.role !== "ADMIN") return main;
-  const requested = requestedProfileId?.trim();
-  if (!requested) return main;
-  const row = await prisma.companySettings.findUnique({
-    where: { id: requested },
-    select: { id: true, name: true },
-  });
-  if (!row) return { error: "Profile not found." };
-  return { profileId: row.id, profileName: row.name };
-}
-
-async function buildInvoiceLines(lines: InvoiceLineInput[]) {
+async function buildInvoiceLines(
+  lines: InvoiceLineInput[],
+  companyId: string,
+  existingItemIds: string[] = []
+) {
   const itemIds = [
     ...new Set(lines.map((line) => line.itemId).filter(Boolean)),
   ] as string[];
   const items = itemIds.length
     ? await prisma.item.findMany({
-        where: { id: { in: itemIds } },
+        where: {
+          id: { in: itemIds },
+          OR: [
+            { companyId },
+            ...(existingItemIds.length
+              ? [{ id: { in: existingItemIds } }]
+              : []),
+          ],
+        },
         select: { id: true, type: true },
       })
     : [];
@@ -153,7 +154,7 @@ export async function createInvoice(
     return { error: "Add at least one line item." };
   }
 
-  const computedLines = await buildInvoiceLines(lines);
+  const computedLines = await buildInvoiceLines(lines, user.companyId);
 
   const subtotalCents = computedLines.reduce((s, l) => s + l.lineTotalCents, 0);
   const discountCents = Math.max(0, Math.round(input.discountCents || 0));
@@ -163,11 +164,14 @@ export async function createInvoice(
   const totalCents = subtotalCents - discountCents;
   const owner = await resolveInvoiceOwnerId(user, input.userId);
   if ("error" in owner) return owner;
-  const profile = await resolveInvoiceProfile(user, input.profileId);
-  if ("error" in profile) return profile;
+  const company = await prisma.company.findUnique({
+    where: { id: user.companyId },
+    select: { id: true, name: true },
+  });
+  if (!company) return { error: "Company not found." };
 
   const invoice = await prisma.$transaction(async (tx) => {
-    const number = await nextDocNumber(tx, "INV");
+    const number = await nextDocNumber(tx, "INV", company.id);
     return tx.invoice.create({
       data: {
         number,
@@ -181,8 +185,8 @@ export async function createInvoice(
         totalCents,
         dueAt: input.dueAt ? parseDateInput(input.dueAt) : null,
         userId: owner.userId,
-        profileId: profile.profileId,
-        profileName: profile.profileName,
+        companyId: company.id,
+        companyName: company.name,
         lines: { create: computedLines },
       },
     });
@@ -210,7 +214,7 @@ export async function recordPayment(
   if (!invoice) return { error: "Invoice not found." };
   if (invoice.status === "VOIDED") return { error: "This invoice is voided." };
   if (invoice.status === "PAID") return { error: "This invoice is already paid." };
-  if (!assertCanManage(user, invoice.userId)) return { error: "Not allowed." };
+  if (!canAccessInvoice(user, invoice)) return { error: "Not allowed." };
 
   const alreadyPaid = paidCents(invoice.receipts);
   const due = remainingCents(invoice.totalCents, invoice.receipts);
@@ -252,8 +256,9 @@ export async function recordPayment(
     if (clearsInOneGo) {
       await tx.receipt.create({
         data: {
-          number: await nextDocNumber(tx, "RCP"),
+          number: await nextDocNumber(tx, "RCP", invoice.companyId),
           invoiceId,
+          companyId: invoice.companyId,
           paymentMethod,
           amountCents,
           notes: notes || null,
@@ -266,6 +271,7 @@ export async function recordPayment(
         data: {
           number: nextPaymentLabel(invoice.number, numbers),
           invoiceId,
+          companyId: invoice.companyId,
           paymentMethod,
           amountCents,
           notes: notes || null,
@@ -289,7 +295,8 @@ export async function recordPayment(
           user.userId,
           paidAt,
           methods.length === 1 ? methods[0] : "Multiple",
-          notes || null
+          notes || null,
+          invoice.companyId
         );
       }
     }
@@ -309,10 +316,10 @@ export async function recordPayment(
 }
 
 function assertCanManage(
-  user: { role: string; userId: string },
-  ownerId: string
+  user: AuthedUser,
+  invoice: { companyId: string; userId: string }
 ) {
-  return user.role === "ADMIN" || ownerId === user.userId;
+  return canAccessInvoice(user, invoice);
 }
 
 async function promoteStandaloneReceipts(
@@ -357,7 +364,8 @@ async function syncSettlementReceipt(
   invoiceId: string,
   invoiceTotalCents: number,
   userId: string,
-  invoiceNumber: string
+  invoiceNumber: string,
+  companyId: string
 ) {
   const docs = await tx.receipt.findMany({
     where: { invoiceId },
@@ -416,7 +424,8 @@ async function syncSettlementReceipt(
       userId,
       last?.paidAt ?? new Date(),
       methods.length === 1 ? methods[0] : "Multiple",
-      last?.notes ?? null
+      last?.notes ?? null,
+      companyId
     );
     return;
   }
@@ -441,10 +450,10 @@ export async function updateInvoice(
 
   const invoice = await prisma.invoice.findUnique({
     where: { id: invoiceId },
-    include: { receipts: true },
+    include: { receipts: true, lines: { select: { itemId: true } } },
   });
   if (!invoice) return { error: "Invoice not found." };
-  if (!assertCanManage(user, invoice.userId)) return { error: "Not allowed." };
+  if (!assertCanManage(user, invoice)) return { error: "Not allowed." };
   if (invoice.status === "VOIDED") return { error: "This invoice is voided." };
 
   const customerName = input.customerName?.trim();
@@ -457,7 +466,14 @@ export async function updateInvoice(
     return { error: "Add at least one line item." };
   }
 
-  const computedLines = await buildInvoiceLines(lines);
+  const existingItemIds = invoice.lines
+    .map((line) => line.itemId)
+    .filter((itemId): itemId is string => Boolean(itemId));
+  const computedLines = await buildInvoiceLines(
+    lines,
+    user.companyId,
+    existingItemIds
+  );
 
   const subtotalCents = computedLines.reduce((s, l) => s + l.lineTotalCents, 0);
   const discountCents = Math.max(0, Math.round(input.discountCents || 0));
@@ -504,7 +520,8 @@ export async function updateInvoice(
       invoiceId,
       totalCents,
       user.userId,
-      invoice.number
+      invoice.number,
+      invoice.companyId
     );
   });
 
@@ -528,7 +545,7 @@ export async function updatePayment(
     include: { invoice: { include: { receipts: true } } },
   });
   if (!payment) return { error: "Payment not found." };
-  if (!assertCanManage(user, payment.invoice.userId))
+  if (!assertCanManage(user, payment.invoice))
     return { error: "Not allowed." };
   if (payment.invoice.status === "VOIDED")
     return { error: "This invoice is voided." };
@@ -578,7 +595,8 @@ export async function updatePayment(
       payment.invoiceId,
       payment.invoice.totalCents,
       user.userId,
-      payment.invoice.number
+      payment.invoice.number,
+      payment.invoice.companyId
     );
   });
 
@@ -617,7 +635,7 @@ export async function voidInvoice(invoiceId: string, formData: FormData) {
     where: { id: invoiceId },
   });
   if (!invoice || invoice.status === "VOIDED") return;
-  if (!assertCanManage(user, invoice.userId)) return;
+  if (!assertCanManage(user, invoice)) return;
 
   const voidReason = parseVoidReason(
     String(formData.get("voidReason") ?? "").trim()
@@ -633,11 +651,12 @@ export async function voidInvoice(invoiceId: string, formData: FormData) {
 }
 
 export async function deleteVoidedInvoice(invoiceId: string) {
-  await requireAdmin();
+  const admin = await requireAdmin();
   const invoice = await prisma.invoice.findUnique({
     where: { id: invoiceId },
   });
   if (!invoice || invoice.status !== "VOIDED") return;
+  if (invoice.companyId !== admin.companyId) return;
 
   await prisma.$transaction(async (tx) => {
     await tx.receipt.deleteMany({ where: { invoiceId } });
@@ -653,7 +672,7 @@ export async function deleteVoidedInvoice(invoiceId: string) {
 export async function bulkDeleteInvoices(
   ids: string[]
 ): Promise<{ error?: string; count?: number }> {
-  await requireAdmin();
+  const admin = await requireAdmin();
   const selected = uniqueIds(ids);
   if (selected.length === 0) return { error: "Select at least one invoice." };
   if (selected.length > 200) {
@@ -661,7 +680,11 @@ export async function bulkDeleteInvoices(
   }
 
   const voided = await prisma.invoice.findMany({
-    where: { id: { in: selected }, status: "VOIDED" },
+    where: {
+      id: { in: selected },
+      status: "VOIDED",
+      companyId: admin.companyId,
+    },
     select: { id: true },
   });
   if (voided.length !== selected.length) {
