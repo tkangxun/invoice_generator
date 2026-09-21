@@ -4,13 +4,14 @@ A web app for the sales team to generate invoices and receipts, and track their 
 
 ## Features
 
-- Login with **company ID + email + password** (one email worldwide; sales belong to one company, admins can hold several and switch from the header)
+- Login with **company ID + email + password**. One email is one person and one role. A salesperson belongs to a single company. An admin can belong to several companies and switch from the header. The same email cannot be a salesperson in one company and an admin in another.
 - Each company has its own letterhead, price list, users, and invoice/receipt numbers
 - Create invoices from that company’s price list (or custom line items)
-- Auto-generated sequential numbering per company: `INV-2026-0001`, `RCP-2026-0001` (resets each year)
-- Record payment on an invoice to mark it paid and automatically generate the linked receipt
-- Printable A4 invoice and receipt documents (use the browser's "Save as PDF")
-- Dashboard with each salesperson's invoice count, unpaid count, and collected sales
+- Auto-generated sequential numbering per company, resetting each year: `INV-2026-0001`, `RCP-2026-0001`. A partial payment is numbered from the invoice: `INV-2026-0001-a`, then `-b`, and so on.
+- A payment smaller than the balance issues that follow-up invoice and leaves the original invoice partially paid. Paying the remaining balance marks the invoice paid and issues the linked receipt.
+- Collected sales count money received on invoices that are not voided. When an invoice was paid in installments, those follow-ups are counted and the final receipt is not, so the same payment is not added twice.
+- Printable A4 invoices, follow-up invoices, and receipts (use the browser's "Save as PDF")
+- Dashboard: a salesperson sees their own invoice count, unpaid count (unpaid and partial), and collected sales. An admin sees company-wide figures — invoice count and collected sales for the selected year or month, and current unpaid — plus a **Sales by person** table for that same period. The invoice count includes voided invoices. The table lists every active salesperson, and any admin or disabled salesperson who has a non-voided sale in that company. In month view, a person’s unpaid count opens their unpaid invoices for that month.
 
 ## Getting started (local)
 
@@ -65,7 +66,7 @@ The public URL will prompt you to log in with company ID + `ADMIN_EMAIL`. Add sa
 - **Company details** shown on invoices/receipts: Settings → Invoice, or `lib/company.ts`
 - **Price list**: Settings → Price list in the app (per company), or `prisma/seed.ts` locally
 - **Currency** (default SGD): `lib/money.ts`
-- **Invoice/receipt layout**: `app/print/invoices/[id]/page.tsx` and `app/print/receipts/[id]/page.tsx`
+- **Invoice/receipt layout**: `app/print/invoices/[id]/page.tsx`, `app/print/follow-up/[id]/page.tsx`, and `app/print/receipts/[id]/page.tsx`
 
 ## Tech stack
 
