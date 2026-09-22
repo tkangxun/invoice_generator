@@ -49,9 +49,16 @@ function run(command, args) {
   });
 }
 
+const OPERATOR_ACCOUNT_ID = "acc_operator";
+
 async function ensureDefaults() {
   const prisma = new PrismaClient();
   try {
+    const account = await prisma.account.upsert({
+      where: { id: OPERATOR_ACCOUNT_ID },
+      update: { exempt: true },
+      create: { id: OPERATOR_ACCOUNT_ID, exempt: true },
+    });
     if ((await prisma.user.count()) === 0) {
       const email = (process.env.ADMIN_EMAIL || "admin@example.com")
         .trim()
@@ -63,6 +70,7 @@ async function ensureDefaults() {
       }
       await prisma.user.create({
         data: {
+          accountId: account.id,
           email,
           name,
           role: "ADMIN",
@@ -71,10 +79,14 @@ async function ensureDefaults() {
       });
       console.log(`Created default admin ${email}`);
     }
-    let company = await prisma.company.findFirst({ orderBy: { name: "asc" } });
+    let company = await prisma.company.findFirst({
+      where: { accountId: account.id },
+      orderBy: { name: "asc" },
+    });
     if (!company) {
       company = await prisma.company.create({
         data: {
+          accountId: account.id,
           code: "alpha-vitality",
           name: "Alpha Vitality",
           brand: "Alpha Vitality",
@@ -92,7 +104,10 @@ async function ensureDefaults() {
       select: { id: true, role: true },
     });
     if (orphanUsers.length) {
-      const companies = await prisma.company.findMany({ select: { id: true } });
+      const companies = await prisma.company.findMany({
+        where: { accountId: account.id },
+        select: { id: true },
+      });
       for (const user of orphanUsers) {
         await prisma.companyMembership.create({
           data: { userId: user.id, companyId: company.id },

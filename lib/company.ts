@@ -167,10 +167,27 @@ export async function ensureCompanyDefaults(companyId: string) {
   }
 }
 
-export async function uniqueCompanyName(base: string, excludeId?: string) {
+type CompanyNameDb = {
+  company: {
+    findMany: (args: {
+      where: { accountId: string; id?: { not: string } };
+      select: { name: true };
+    }) => Promise<{ name: string }[]>;
+  };
+};
+
+export async function uniqueCompanyName(
+  db: CompanyNameDb,
+  base: string,
+  accountId: string,
+  excludeId?: string
+) {
   const trimmed = (base.trim() || "Company").slice(0, 80);
-  const existing = await prisma.company.findMany({
-    where: excludeId ? { id: { not: excludeId } } : undefined,
+  const existing = await db.company.findMany({
+    where: {
+      accountId,
+      ...(excludeId ? { id: { not: excludeId } } : {}),
+    },
     select: { name: true },
   });
   const taken = new Set(existing.map((row) => row.name.toLowerCase()));

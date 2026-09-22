@@ -47,6 +47,7 @@ export type AuthedUser = {
   userId: string;
   name: string;
   role: string;
+  accountId: string;
   companyId: string;
   companyName: string;
   companyCode: string;
@@ -65,7 +66,7 @@ async function loadAuthedUser(): Promise<AuthedUser | null> {
     },
     select: {
       company: { select: { id: true, name: true, code: true } },
-      user: { select: { id: true, name: true, role: true, active: true } },
+      user: { select: { id: true, name: true, role: true, active: true, accountId: true } },
     },
   });
   if (!membership?.user.active) return null;
@@ -74,6 +75,7 @@ async function loadAuthedUser(): Promise<AuthedUser | null> {
     userId: membership.user.id,
     name: membership.user.name,
     role: membership.user.role,
+    accountId: membership.user.accountId,
     companyId: membership.company.id,
     companyName: membership.company.name,
     companyCode: membership.company.code,

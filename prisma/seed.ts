@@ -2,6 +2,8 @@ import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
 import defaultItems from "./default-price-list.json";
 
+const OPERATOR_ACCOUNT_ID = "acc_operator";
+
 const COMPANY_DEFAULTS = {
   brand: "Alpha Vitality",
   tagline: "Personalised Health Optimisation",
@@ -65,10 +67,20 @@ async function main() {
     );
   }
 
-  let company = await prisma.company.findFirst({ orderBy: { name: "asc" } });
+  const account = await prisma.account.upsert({
+    where: { id: OPERATOR_ACCOUNT_ID },
+    update: { exempt: true },
+    create: { id: OPERATOR_ACCOUNT_ID, exempt: true },
+  });
+
+  let company = await prisma.company.findFirst({
+    where: { accountId: account.id },
+    orderBy: { name: "asc" },
+  });
   if (!company) {
     company = await prisma.company.create({
       data: {
+        accountId: account.id,
         code: "alpha-vitality",
         name: COMPANY_DEFAULTS.brand,
         ...COMPANY_DEFAULTS,
@@ -78,9 +90,12 @@ async function main() {
 
   for (const u of users) {
     const user = await prisma.user.upsert({
-      where: { email: u.email },
+      where: {
+        accountId_email: { accountId: account.id, email: u.email },
+      },
       update: {},
       create: {
+        accountId: account.id,
         email: u.email,
         name: u.name,
         role: u.role,
@@ -95,7 +110,10 @@ async function main() {
       update: {},
     });
     if (u.role === "ADMIN") {
-      const companies = await prisma.company.findMany({ select: { id: true } });
+      const companies = await prisma.company.findMany({
+        where: { accountId: account.id },
+        select: { id: true },
+      });
       for (const row of companies) {
         await prisma.companyMembership.upsert({
           where: {

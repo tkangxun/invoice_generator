@@ -7,17 +7,30 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+model Account {
+  id        String    @id @default(cuid())
+  exempt    Boolean   @default(false)
+  createdAt DateTime  @default(now())
+  users     User[]
+  companies Company[]
+}
+
 model User {
   id           String               @id @default(cuid())
-  email        String               @unique
+  email        String
   name         String
   passwordHash String
   role         String               @default("SALES") // SALES | ADMIN
   active       Boolean              @default(true)
   createdAt    DateTime             @default(now())
+  account      Account              @relation(fields: [accountId], references: [id])
+  accountId    String
   invoices     Invoice[]
   receipts     Receipt[]
   memberships  CompanyMembership[]
+
+  @@unique([accountId, email])
+  @@index([accountId])
 }
 
 model CompanyMembership {
@@ -34,7 +47,7 @@ model CompanyMembership {
 model Company {
   id             String               @id @default(cuid())
   code           String               @unique
-  name           String               @unique
+  name           String
   brand          String
   tagline        String
   legalName      String
@@ -46,12 +59,17 @@ model Company {
   paynowQrMime   String?
   paynowQrBytes  Bytes?
   updatedAt      DateTime             @updatedAt
+  account        Account              @relation(fields: [accountId], references: [id])
+  accountId      String
   memberships    CompanyMembership[]
   items          Item[]
   itemTypes      ItemType[]
   invoices       Invoice[]
   receipts       Receipt[]
   paymentMethods PaymentMethod[]
+
+  @@unique([accountId, name])
+  @@index([accountId])
 }
 
 model ItemType {
