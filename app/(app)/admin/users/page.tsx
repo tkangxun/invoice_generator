@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { createAccount } from "@/lib/account";
 import { prisma } from "@/lib/db";
 import { membersWhere, requireAdmin } from "@/lib/session";
 import {
@@ -44,6 +45,7 @@ export default async function AdminUsersPage({
   const user = await requireAdmin();
   const { error, status: statusParam, added } = await searchParams;
   const statusFilter = parseUserStatus(statusParam);
+  const seats = await createAccount(prisma).seatsFor(user.userId);
 
   const users = await prisma.user.findMany({
     where: {
@@ -73,6 +75,12 @@ export default async function AdminUsersPage({
         Users with invoices or receipts can be disabled, not deleted. Salespeople
         belong to this company only. Admins can be added to more companies.
       </p>
+      {seats.ok && !("exempt" in seats) ? (
+        <p className="mt-2 text-sm text-gray-600">
+          Seats: {seats.used} used of {seats.purchased} purchased ({seats.free}{" "}
+          free).
+        </p>
+      ) : null}
 
       <div className="mt-6 flex overflow-hidden rounded-lg border border-gray-200 w-fit">
         {USER_STATUS_FILTERS.map((option) => {
@@ -103,6 +111,16 @@ export default async function AdminUsersPage({
         {error === "sales-other-company" && (
           <p className="mt-2 text-sm text-red-600">
             That salesperson already belongs to another company.
+          </p>
+        )}
+        {error === "seats-full" && (
+          <p className="mt-2 text-sm text-red-600">
+            The seats are full. Ask the main admin to buy another pack.
+          </p>
+        )}
+        {error === "main-admin" && (
+          <p className="mt-2 text-sm text-red-600">
+            The main admin cannot be disabled or removed.
           </p>
         )}
         {added && (
@@ -183,6 +201,9 @@ export default async function AdminUsersPage({
                   {u.id === user.userId && (
                     <span className="ml-2 text-xs text-gray-400">(you)</span>
                   )}
+                  {u.isMainAdmin && (
+                    <span className="ml-2 text-xs text-gray-400">(main admin)</span>
+                  )}
                 </td>
                 <td className="px-5 py-3">{u.email}</td>
                 <td className="px-5 py-3">{u.role}</td>
@@ -219,7 +240,7 @@ export default async function AdminUsersPage({
                         Reset
                       </button>
                     </form>
-                    {u.id !== user.userId && (
+                    {u.id !== user.userId && !u.isMainAdmin && (
                       <>
                         <form action={toggleUserActive.bind(null, u.id)}>
                           <button

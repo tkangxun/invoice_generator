@@ -374,3 +374,297 @@ test("the same email cannot be a second person on one account", async () => {
     })
   ).toEqual({ ok: false, error: "email-exists" });
 });
+
+async function signUpCustomer(overrides: Partial<typeof newCustomer> = {}) {
+  const input = { ...newCustomer, ...overrides };
+  const signedUp = await account.signUp(input, {
+    async chargeFirstPack() {
+      return {
+        ok: true,
+        customerId: `cus_${input.companyCode}`,
+        subscriptionId: `sub_${input.companyCode}`,
+      };
+    },
+  });
+  if (!signedUp.ok) throw new Error(signedUp.error);
+  return signedUp;
+}
+
+async function fillRemainingSeats(
+  adminUserId: string,
+  companyId: string,
+  count: number,
+  prefix: string
+) {
+  const ids: string[] = [];
+  for (let i = 0; i < count; i++) {
+    const added = await account.addPerson(adminUserId, {
+      name: `${prefix} ${i}`,
+      email: `${prefix}${i}@example.com`,
+      password: "sales123",
+      role: "SALES",
+      companyId,
+    });
+    if (!added.ok) throw new Error(added.error);
+    ids.push(added.userId);
+  }
+  return ids;
+}
+
+test("each active person uses one seat, counted once across companies", async () => {
+  const customer = await signUpCustomer();
+  expect(await account.seats(customer.accountId)).toMatchObject({
+    purchased: 5,
+    used: 1,
+    free: 4,
+  });
+
+  const second = await account.createCompany(customer.userId, {
+    name: "Second Co",
+    currentCompanyId: customer.companyId,
+  });
+  if (!second.ok) throw new Error(second.error);
+
+  const pat = await account.addPerson(customer.userId, {
+    name: "Pat Admin",
+    email: "pat@example.com",
+    password: "admin123",
+    role: "ADMIN",
+    companyId: customer.companyId,
+  });
+  if (!pat.ok) throw new Error(pat.error);
+  expect(await account.seats(customer.accountId)).toMatchObject({ used: 2, free: 3 });
+
+  expect(
+    await account.addPerson(customer.userId, {
+      name: "Pat Admin",
+      email: "pat@example.com",
+      password: "admin123",
+      role: "ADMIN",
+      companyId: second.companyId,
+    })
+  ).toEqual({ ok: true, userId: pat.userId, created: false });
+  expect(await account.seats(customer.accountId)).toMatchObject({ used: 2, free: 3 });
+});
+
+test("adding a person is refused when seats are full", async () => {
+  const customer = await signUpCustomer({ companyCode: "full-co", companyName: "Full Co" });
+  await fillRemainingSeats(customer.userId, customer.companyId, 4, "seat");
+
+  expect(await account.seats(customer.accountId)).toMatchObject({
+    purchased: 5,
+    used: 5,
+    free: 0,
+  });
+  expect(
+    await account.addPerson(customer.userId, {
+      name: "Extra",
+      email: "extra@example.com",
+      password: "sales123",
+      role: "SALES",
+      companyId: customer.companyId,
+    })
+  ).toEqual({ ok: false, error: "seats-full" });
+});
+
+test("disabling frees a seat; re-enabling uses one and is refused when full", async () => {
+  const customer = await signUpCustomer({
+    companyCode: "toggle-co",
+    companyName: "Toggle Co",
+  });
+  const [aliceId] = await fillRemainingSeats(
+    customer.userId,
+    customer.companyId,
+    4,
+    "toggle"
+  );
+
+  expect(await account.setActive(customer.userId, aliceId, false)).toEqual({ ok: true });
+  expect(await account.seats(customer.accountId)).toMatchObject({ used: 4, free: 1 });
+  expect(
+    await account.signIn({
+      companyCode: "toggle-co",
+      email: "toggle0@example.com",
+      password: "sales123",
+    })
+  ).toEqual({ ok: false, error: "invalid" });
+
+  const bob = await account.addPerson(customer.userId, {
+    name: "Bob",
+    email: "bob@example.com",
+    password: "sales123",
+    role: "SALES",
+    companyId: customer.companyId,
+  });
+  if (!bob.ok) throw new Error(bob.error);
+  expect(await account.seats(customer.accountId)).toMatchObject({ used: 5, free: 0 });
+
+  expect(await account.setActive(customer.userId, aliceId, true)).toEqual({
+    ok: false,
+    error: "seats-full",
+  });
+  expect(await account.person(aliceId)).toMatchObject({ active: false });
+
+  expect(await account.setActive(customer.userId, bob.userId, false)).toEqual({ ok: true });
+  expect(await account.setActive(customer.userId, aliceId, true)).toEqual({ ok: true });
+  expect(await account.seats(customer.accountId)).toMatchObject({ used: 5, free: 0 });
+  expect(
+    await account.signIn({
+      companyCode: "toggle-co",
+      email: "toggle0@example.com",
+      password: "sales123",
+    })
+  ).toMatchObject({ ok: true, userId: aliceId });
+});
+
+test("the main admin cannot be disabled or removed and keeps a seat", async () => {
+  const customer = await signUpCustomer({
+    companyCode: "main-co",
+    companyName: "Main Co",
+  });
+
+  expect(await account.setActive(customer.userId, customer.userId, false)).toEqual({
+    ok: false,
+    error: "main-admin",
+  });
+  expect(await account.removePerson(customer.userId, customer.userId)).toEqual({
+    ok: false,
+    error: "main-admin",
+  });
+  expect(await account.person(customer.userId)).toMatchObject({
+    isMainAdmin: true,
+    active: true,
+  });
+  expect(await account.seats(customer.accountId)).toMatchObject({ used: 1, free: 4 });
+});
+
+test("creating a company uses no seat and works when seats are full", async () => {
+  const customer = await signUpCustomer({
+    companyCode: "co-full",
+    companyName: "Company Full",
+  });
+  const pat = await account.addPerson(customer.userId, {
+    name: "Pat Admin",
+    email: "pat-full@example.com",
+    password: "admin123",
+    role: "ADMIN",
+    companyId: customer.companyId,
+  });
+  if (!pat.ok) throw new Error(pat.error);
+  await fillRemainingSeats(customer.userId, customer.companyId, 3, "cofull");
+  expect(await account.seats(customer.accountId)).toMatchObject({ used: 5, free: 0 });
+
+  const created = await account.createCompany(customer.userId, {
+    name: "Extra Brand",
+    currentCompanyId: customer.companyId,
+  });
+  if (!created.ok) throw new Error(created.error);
+  expect(created.name).toBe("Extra Brand");
+  expect(await account.seats(customer.accountId)).toMatchObject({ used: 5, free: 0 });
+
+  expect(
+    await account.addPerson(customer.userId, {
+      name: "New Person",
+      email: "nobody-left@example.com",
+      password: "sales123",
+      role: "SALES",
+      companyId: customer.companyId,
+    })
+  ).toEqual({ ok: false, error: "seats-full" });
+
+  expect(
+    await account.addPerson(customer.userId, {
+      name: "Pat Admin",
+      email: "pat-full@example.com",
+      password: "admin123",
+      role: "ADMIN",
+      companyId: created.companyId,
+    })
+  ).toEqual({ ok: true, userId: pat.userId, created: false });
+  expect(await account.seats(customer.accountId)).toMatchObject({ used: 5, free: 0 });
+});
+
+test("a salesperson cannot be added to a second company", async () => {
+  const customer = await signUpCustomer({
+    companyCode: "sales-co",
+    companyName: "Sales Co",
+  });
+  const second = await account.createCompany(customer.userId, {
+    name: "Sales Two",
+    currentCompanyId: customer.companyId,
+  });
+  if (!second.ok) throw new Error(second.error);
+
+  const alice = await account.addPerson(customer.userId, {
+    name: "Alice",
+    email: "alice-sales@example.com",
+    password: "sales123",
+    role: "SALES",
+    companyId: customer.companyId,
+  });
+  if (!alice.ok) throw new Error(alice.error);
+  expect(
+    await account.addPerson(customer.userId, {
+      name: "Alice",
+      email: "alice-sales@example.com",
+      password: "sales123",
+      role: "SALES",
+      companyId: second.companyId,
+    })
+  ).toEqual({ ok: false, error: "sales-other-company" });
+});
+
+test("other admins can see seats but not the bill", async () => {
+  const customer = await signUpCustomer({
+    companyCode: "view-co",
+    companyName: "View Co",
+  });
+  const other = await account.addPerson(customer.userId, {
+    name: "Other Admin",
+    email: "viewer@example.com",
+    password: "admin123",
+    role: "ADMIN",
+    companyId: customer.companyId,
+  });
+  if (!other.ok) throw new Error(other.error);
+
+  expect(await account.seatsFor(other.userId)).toEqual({
+    ok: true,
+    purchased: 5,
+    used: 2,
+    free: 3,
+  });
+  expect(await account.billFor(other.userId)).toEqual({
+    ok: false,
+    error: "forbidden",
+  });
+  expect(await account.billFor(customer.userId)).toEqual({
+    ok: true,
+    quantity: 1,
+    interval: "month",
+    currency: "SGD",
+  });
+});
+
+test("the operator account can add people with no seat refusal", async () => {
+  const opened = await openOperator();
+  for (let i = 0; i < 8; i++) {
+    const added = await account.addPerson(opened.userId, {
+      name: `Op ${i}`,
+      email: `op${i}@example.com`,
+      password: "sales123",
+      role: "SALES",
+      companyId: opened.companyId,
+    });
+    expect(added.ok).toBe(true);
+  }
+  expect(await account.seatsFor(opened.userId)).toEqual({
+    ok: true,
+    exempt: true,
+    used: 9,
+  });
+  expect(await account.billFor(opened.userId)).toEqual({
+    ok: false,
+    error: "forbidden",
+  });
+});
