@@ -268,6 +268,100 @@ test("an admin can belong to several companies and a salesperson cannot", async 
   ]);
 });
 
+const newCustomer = {
+  name: "New Admin",
+  email: "new@example.com",
+  password: "secret1",
+  companyName: "New Co",
+  companyCode: "new-co",
+};
+
+test("a taken company ID is refused before payment", async () => {
+  await openOperator();
+  let charged = false;
+  const result = await account.signUp(
+    { ...newCustomer, companyCode: "alpha-vitality" },
+    {
+      async chargeFirstPack() {
+        charged = true;
+        return { ok: true, customerId: "cus_should_not", subscriptionId: "sub_should_not" };
+      },
+    }
+  );
+  expect(result).toEqual({ ok: false, error: "company-id-taken" });
+  expect(charged).toBe(false);
+});
+
+test("a failed payment leaves no account, person, or company", async () => {
+  const result = await account.signUp(
+    { ...newCustomer, companyCode: "unpaid-co" },
+    {
+      async chargeFirstPack() {
+        return { ok: false };
+      },
+    }
+  );
+  expect(result).toEqual({ ok: false, error: "payment-failed" });
+  expect(
+    await account.signIn({
+      companyCode: "alpha-vitality",
+      email: "new@example.com",
+      password: "secret1",
+    })
+  ).toEqual({ ok: false, error: "invalid" });
+});
+
+test("paying for the first pack creates the main admin with 4 seats left", async () => {
+  const operator = await openOperator();
+  let charged: unknown = null;
+  const signedUp = await account.signUp(
+    { ...newCustomer, email: "admin@example.com" },
+    {
+      async chargeFirstPack(input) {
+        charged = input;
+        return { ok: true, customerId: "cus_123", subscriptionId: "sub_123" };
+      },
+    }
+  );
+  if (!signedUp.ok) throw new Error(signedUp.error);
+
+  expect(charged).toEqual({
+    email: "admin@example.com",
+    packs: 1,
+    interval: "month",
+    currency: "SGD",
+  });
+  expect(await account.seats(signedUp.accountId)).toEqual({
+    packs: 1,
+    purchased: 5,
+    used: 1,
+    free: 4,
+  });
+  expect(await account.subscription(signedUp.accountId)).toEqual({
+    quantity: 1,
+    interval: "month",
+    currency: "SGD",
+  });
+  expect(await account.person(signedUp.userId)).toEqual({
+    isMainAdmin: true,
+    role: "ADMIN",
+    active: true,
+  });
+  expect(
+    await account.signIn({
+      companyCode: "new-co",
+      email: "admin@example.com",
+      password: "secret1",
+    })
+  ).toMatchObject({ ok: true, userId: signedUp.userId, companyId: signedUp.companyId });
+  expect(await account.companiesFor(signedUp.userId)).toEqual([
+    { id: signedUp.companyId, name: "New Co", code: "new-co" },
+  ]);
+  expect(await account.companiesFor(operator.userId)).toEqual([
+    { id: operator.companyId, name: "Alpha Vitality", code: "alpha-vitality" },
+  ]);
+});
+
 test("the same email cannot be a second person on one account", async () => {
   const opened = await openOperator();
   expect(

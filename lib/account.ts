@@ -2,6 +2,7 @@ import bcrypt from "bcryptjs";
 import { Prisma, PrismaClient } from "@prisma/client";
 import { COMPANY_DEFAULTS, uniqueCompanyName } from "@/lib/company";
 import { normalizeCompanyCode, uniqueCompanyCode } from "@/lib/company-code";
+import type { PaymentPort } from "@/lib/payment-port";
 
 export const OPERATOR_ACCOUNT_ID = "acc_operator";
 
@@ -50,6 +51,30 @@ export type CreateCompanyResult =
   | { ok: false; error: "invalid" | "forbidden" };
 
 export type CompanyChoice = { id: string; name: string; code: string };
+
+export type SignUpInput = {
+  name: string;
+  email: string;
+  password: string;
+  companyName: string;
+  companyCode: string;
+};
+
+export type SignUpResult =
+  | {
+      ok: true;
+      accountId: string;
+      userId: string;
+      companyId: string;
+      companyCode: string;
+    }
+  | { ok: false; error: "invalid" | "company-id-taken" | "payment-failed" };
+
+const FIRST_PACK = {
+  packs: 1,
+  interval: "month",
+  currency: "SGD",
+} as const;
 
 const INVALID_SIGN_IN = { ok: false as const, error: "invalid" as const };
 
@@ -309,6 +334,150 @@ export function createAccount(db: AccountDb) {
         code: company.code,
         name: company.name,
       };
+    },
+
+    async inspectSignUp(
+      input: SignUpInput
+    ): Promise<{ ok: true; companyCode: string; email: string } | { ok: false; error: "invalid" | "company-id-taken" }> {
+      const name = input.name.trim();
+      const email = normalizeEmail(input.email);
+      const companyName = input.companyName.trim();
+      const companyCode = normalizeCompanyCode(input.companyCode);
+      if (!name || !email || input.password.length < 6 || !companyName || !companyCode) {
+        return { ok: false, error: "invalid" };
+      }
+      const taken = await db.company.findUnique({
+        where: { code: companyCode },
+        select: { id: true },
+      });
+      if (taken) return { ok: false, error: "company-id-taken" };
+      return { ok: true, companyCode, email };
+    },
+
+    async signUp(input: SignUpInput, payment: PaymentPort): Promise<SignUpResult> {
+      const ready = await this.inspectSignUp(input);
+      if (!ready.ok) return ready;
+
+      const paid = await payment.chargeFirstPack({
+        email: ready.email,
+        ...FIRST_PACK,
+      });
+      if (!paid.ok) return { ok: false, error: "payment-failed" };
+
+      const existing = await db.account.findUnique({
+        where: { stripeSubscriptionId: paid.subscriptionId },
+        select: {
+          id: true,
+          users: { where: { isMainAdmin: true }, select: { id: true }, take: 1 },
+          companies: { select: { id: true, code: true }, take: 1 },
+        },
+      });
+      const existingUser = existing?.users[0];
+      const existingCompany = existing?.companies[0];
+      if (existing && existingUser && existingCompany) {
+        return {
+          ok: true,
+          accountId: existing.id,
+          userId: existingUser.id,
+          companyId: existingCompany.id,
+          companyCode: existingCompany.code,
+        };
+      }
+
+      const name = input.name.trim();
+      const companyName = input.companyName.trim().slice(0, 80);
+      const passwordHash = await bcrypt.hash(input.password, 10);
+      const write = async (tx: AccountDb) => {
+        const account = await tx.account.create({
+          data: {
+            exempt: false,
+            packCount: FIRST_PACK.packs,
+            billingInterval: FIRST_PACK.interval,
+            currency: FIRST_PACK.currency,
+            stripeCustomerId: paid.customerId,
+            stripeSubscriptionId: paid.subscriptionId,
+          },
+          select: { id: true },
+        });
+        const company = await tx.company.create({
+          data: {
+            accountId: account.id,
+            code: ready.companyCode,
+            name: companyName,
+            ...COMPANY_DEFAULTS,
+          },
+          select: { id: true, code: true },
+        });
+        const user = await tx.user.create({
+          data: {
+            accountId: account.id,
+            name,
+            email: ready.email,
+            role: "ADMIN",
+            isMainAdmin: true,
+            passwordHash,
+          },
+          select: { id: true },
+        });
+        await tx.companyMembership.create({
+          data: { userId: user.id, companyId: company.id },
+        });
+        return {
+          ok: true as const,
+          accountId: account.id,
+          userId: user.id,
+          companyId: company.id,
+          companyCode: company.code,
+        };
+      };
+
+      if ("$transaction" in db) {
+        return db.$transaction(write);
+      }
+      return write(db);
+    },
+
+    async seats(accountId: string) {
+      const account = await db.account.findUnique({
+        where: { id: accountId },
+        select: { packCount: true },
+      });
+      if (!account) return null;
+      const used = await db.user.count({
+        where: { accountId, active: true },
+      });
+      const purchased = account.packCount * 5;
+      return {
+        packs: account.packCount,
+        purchased,
+        used,
+        free: purchased - used,
+      };
+    },
+
+    async subscription(accountId: string) {
+      const account = await db.account.findUnique({
+        where: { id: accountId },
+        select: {
+          packCount: true,
+          billingInterval: true,
+          currency: true,
+          stripeSubscriptionId: true,
+        },
+      });
+      if (!account?.stripeSubscriptionId) return null;
+      return {
+        quantity: account.packCount,
+        interval: account.billingInterval,
+        currency: account.currency,
+      };
+    },
+
+    async person(userId: string) {
+      return db.user.findUnique({
+        where: { id: userId },
+        select: { isMainAdmin: true, role: true, active: true },
+      });
     },
 
     async setActive(actorUserId: string, userId: string, active: boolean) {
