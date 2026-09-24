@@ -1,4 +1,6 @@
 import Link from "next/link";
+import { createAccount } from "@/lib/account";
+import { prisma } from "@/lib/db";
 import { requireAdmin } from "@/lib/session";
 
 export default async function AdminLayout({
@@ -6,7 +8,9 @@ export default async function AdminLayout({
 }: {
   children: React.ReactNode;
 }) {
-  await requireAdmin();
+  const user = await requireAdmin();
+  const bill = await createAccount(prisma).billFor(user.userId);
+  const showBilling = bill.ok;
 
   return (
     <div>
@@ -41,6 +45,14 @@ export default async function AdminLayout({
         >
           Users
         </Link>
+        {showBilling ? (
+          <Link
+            href="/admin/billing"
+            className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 font-medium text-gray-700 hover:bg-gray-50"
+          >
+            Billing
+          </Link>
+        ) : null}
         <Link
           href="/receipts"
           className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 font-medium text-gray-700 hover:bg-gray-50"
