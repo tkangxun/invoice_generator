@@ -41,5 +41,11 @@ export function paymentForCheckoutSession(sessionId: string): PaymentPort {
       if (!customerId || !subscriptionId) return { ok: false };
       return { ok: true, customerId, subscriptionId };
     },
+    async renewalFailure() {
+      return { ok: false };
+    },
+    async paymentSuccess() {
+      return { ok: false };
+    },
   };
 }

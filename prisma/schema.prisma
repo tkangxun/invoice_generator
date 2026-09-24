@@ -15,6 +15,7 @@ model Account {
   stripeSubscriptionId String?   @unique
   billingInterval      String    @default("month")
   currency             String    @default("SGD")
+  graceEndsAt          DateTime?
   createdAt            DateTime  @default(now())
   users                User[]
   companies            Company[]
