@@ -44,7 +44,27 @@ export type AddPersonInput = {
 
 export type AddPersonResult =
   | { ok: true; userId: string; created: boolean }
-  | { ok: false; error: "invalid" | "email-exists" | "sales-other-company" | "forbidden" };
+  | {
+      ok: false;
+      error: "invalid" | "email-exists" | "sales-other-company" | "forbidden" | "seats-full";
+    };
+
+export type SetActiveResult =
+  | { ok: true }
+  | { ok: false; error: "forbidden" | "main-admin" | "seats-full" };
+
+export type RemovePersonResult =
+  | { ok: true }
+  | { ok: false; error: "forbidden" | "main-admin" };
+
+export type SeatsForResult =
+  | { ok: true; purchased: number; used: number; free: number }
+  | { ok: true; exempt: true; used: number }
+  | { ok: false; error: "forbidden" };
+
+export type BillForResult =
+  | { ok: true; quantity: number; interval: string; currency: string }
+  | { ok: false; error: "forbidden" };
 
 export type CreateCompanyResult =
   | { ok: true; companyId: string; code: string; name: string }
@@ -83,6 +103,37 @@ function normalizeEmail(email: string) {
 }
 
 export function createAccount(db: AccountDb) {
+  async function seatState(accountId: string) {
+    const account = await db.account.findUnique({
+      where: { id: accountId },
+      select: { exempt: true, packCount: true },
+    });
+    if (!account) return null;
+    const used = await db.user.count({
+      where: { accountId, active: true },
+    });
+    if (account.exempt) {
+      return { exempt: true as const, used };
+    }
+    const purchased = account.packCount * 5;
+    return {
+      exempt: false as const,
+      purchased,
+      used,
+      free: purchased - used,
+    };
+  }
+
+  async function requireFreeSeat(accountId: string): Promise<
+    { ok: true } | { ok: false; error: "seats-full" }
+  > {
+    const state = await seatState(accountId);
+    if (!state) return { ok: false, error: "seats-full" };
+    if (state.exempt) return { ok: true };
+    if (state.free < 1) return { ok: false, error: "seats-full" };
+    return { ok: true };
+  }
+
   return {
     async openAccount(input: OpenAccountInput): Promise<OpenAccountResult> {
       const name = input.admin.name.trim();
@@ -262,6 +313,9 @@ export function createAccount(db: AccountDb) {
         }
         return { ok: false, error: "email-exists" };
       }
+
+      const seat = await requireFreeSeat(actor.accountId);
+      if (!seat.ok) return seat;
 
       const created = await db.user.create({
         data: {
@@ -455,6 +509,24 @@ export function createAccount(db: AccountDb) {
       };
     },
 
+    async seatsFor(actorUserId: string): Promise<SeatsForResult> {
+      const actor = await db.user.findUnique({ where: { id: actorUserId } });
+      if (!actor?.active || actor.role !== "ADMIN") {
+        return { ok: false, error: "forbidden" };
+      }
+      const state = await seatState(actor.accountId);
+      if (!state) return { ok: false, error: "forbidden" };
+      if (state.exempt) {
+        return { ok: true, exempt: true, used: state.used };
+      }
+      return {
+        ok: true,
+        purchased: state.purchased,
+        used: state.used,
+        free: state.free,
+      };
+    },
+
     async subscription(accountId: string) {
       const account = await db.account.findUnique({
         where: { id: accountId },
@@ -473,6 +545,16 @@ export function createAccount(db: AccountDb) {
       };
     },
 
+    async billFor(actorUserId: string): Promise<BillForResult> {
+      const actor = await db.user.findUnique({ where: { id: actorUserId } });
+      if (!actor?.active || actor.role !== "ADMIN" || !actor.isMainAdmin) {
+        return { ok: false, error: "forbidden" };
+      }
+      const bill = await this.subscription(actor.accountId);
+      if (!bill) return { ok: false, error: "forbidden" };
+      return { ok: true, ...bill };
+    },
+
     async person(userId: string) {
       return db.user.findUnique({
         where: { id: userId },
@@ -480,17 +562,50 @@ export function createAccount(db: AccountDb) {
       });
     },
 
-    async setActive(actorUserId: string, userId: string, active: boolean) {
+    async setActive(
+      actorUserId: string,
+      userId: string,
+      active: boolean
+    ): Promise<SetActiveResult> {
       const actor = await db.user.findUnique({ where: { id: actorUserId } });
       if (!actor?.active || actor.role !== "ADMIN") {
-        return { ok: false as const, error: "forbidden" as const };
+        return { ok: false, error: "forbidden" };
       }
       const target = await db.user.findUnique({ where: { id: userId } });
       if (!target || target.accountId !== actor.accountId) {
-        return { ok: false as const, error: "forbidden" as const };
+        return { ok: false, error: "forbidden" };
+      }
+      if (target.isMainAdmin && !active) {
+        return { ok: false, error: "main-admin" };
+      }
+      if (active === target.active) {
+        return { ok: true };
+      }
+      if (active) {
+        const seat = await requireFreeSeat(actor.accountId);
+        if (!seat.ok) return seat;
       }
       await db.user.update({ where: { id: userId }, data: { active } });
-      return { ok: true as const };
+      return { ok: true };
+    },
+
+    async removePerson(
+      actorUserId: string,
+      userId: string
+    ): Promise<RemovePersonResult> {
+      const actor = await db.user.findUnique({ where: { id: actorUserId } });
+      if (!actor?.active || actor.role !== "ADMIN") {
+        return { ok: false, error: "forbidden" };
+      }
+      const target = await db.user.findUnique({ where: { id: userId } });
+      if (!target || target.accountId !== actor.accountId) {
+        return { ok: false, error: "forbidden" };
+      }
+      if (target.isMainAdmin) {
+        return { ok: false, error: "main-admin" };
+      }
+      await db.user.delete({ where: { id: userId } });
+      return { ok: true };
     },
   };
 }

@@ -435,7 +435,12 @@ export async function createUser(formData: FormData) {
     companyId: admin.companyId,
   });
   if (!result.ok) {
-    const error = result.error === "forbidden" ? "invalid" : result.error;
+    const error =
+      result.error === "forbidden"
+        ? "invalid"
+        : result.error === "seats-full"
+          ? "seats-full"
+          : result.error;
     redirect(`/admin/users?error=${error}`);
   }
   revalidatePath("/admin/users");
@@ -471,7 +476,17 @@ export async function toggleUserActive(userId: string) {
   if (!(await memberOfCurrentCompany(admin, userId))) return;
   const user = await prisma.user.findUnique({ where: { id: userId } });
   if (!user) return;
-  await createAccount(prisma).setActive(admin.userId, userId, !user.active);
+  const result = await createAccount(prisma).setActive(
+    admin.userId,
+    userId,
+    !user.active
+  );
+  if (!result.ok && result.error === "seats-full") {
+    redirect(adminUsersPath({ error: "seats-full" }));
+  }
+  if (!result.ok && result.error === "main-admin") {
+    redirect(adminUsersPath({ error: "main-admin" }));
+  }
   revalidatePath("/admin/users");
 }
 
@@ -491,6 +506,10 @@ export async function deleteUser(userId: string, formData: FormData) {
   });
   if (!target) return;
 
+  if (target.isMainAdmin) {
+    redirect(adminUsersPath({ status, error: "main-admin" }));
+  }
+
   if (target.role === "ADMIN" && target._count.memberships > 1) {
     await prisma.companyMembership.delete({
       where: {
@@ -505,7 +524,10 @@ export async function deleteUser(userId: string, formData: FormData) {
     redirect(adminUsersPath({ status, error: "has-records" }));
   }
 
-  await prisma.user.delete({ where: { id: userId } });
+  const removed = await createAccount(prisma).removePerson(admin.userId, userId);
+  if (!removed.ok) {
+    redirect(adminUsersPath({ status, error: removed.error }));
+  }
   revalidatePath("/admin/users");
   redirect(adminUsersPath({ status }));
 }
