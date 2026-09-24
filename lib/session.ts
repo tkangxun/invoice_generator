@@ -10,7 +10,7 @@ export type SessionData = {
   companyId?: string;
 };
 
-function sessionOptions(): SessionOptions {
+export function sessionOptionsFor(cookieName: string, maxAge?: number): SessionOptions {
   const secret = process.env.SESSION_SECRET ?? "";
   if (secret.length < 32) {
     // next build imports these pages before Railway injects runtime variables.
@@ -20,8 +20,8 @@ function sessionOptions(): SessionOptions {
     ) {
       return {
         password: "build-time-placeholder-secret-min-32-chars",
-        cookieName: "invoice_app_session",
-        cookieOptions: { secure: true, httpOnly: true, sameSite: "lax" },
+        cookieName,
+        cookieOptions: { secure: true, httpOnly: true, sameSite: "lax", maxAge },
       };
     }
     throw new Error(
@@ -30,17 +30,18 @@ function sessionOptions(): SessionOptions {
   }
   return {
     password: secret,
-    cookieName: "invoice_app_session",
+    cookieName,
     cookieOptions: {
       secure: process.env.NODE_ENV === "production",
       httpOnly: true,
       sameSite: "lax",
+      maxAge,
     },
   };
 }
 
 export async function getSession() {
-  return getIronSession<SessionData>(await cookies(), sessionOptions());
+  return getIronSession<SessionData>(await cookies(), sessionOptionsFor("invoice_app_session"));
 }
 
 export type AuthedUser = {

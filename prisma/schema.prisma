@@ -8,11 +8,16 @@ datasource db {
 }
 
 model Account {
-  id        String    @id @default(cuid())
-  exempt    Boolean   @default(false)
-  createdAt DateTime  @default(now())
-  users     User[]
-  companies Company[]
+  id                   String    @id @default(cuid())
+  exempt               Boolean   @default(false)
+  packCount            Int       @default(0)
+  stripeCustomerId     String?
+  stripeSubscriptionId String?   @unique
+  billingInterval      String    @default("month")
+  currency             String    @default("SGD")
+  createdAt            DateTime  @default(now())
+  users                User[]
+  companies            Company[]
 }
 
 model User {
@@ -22,6 +27,7 @@ model User {
   passwordHash String
   role         String               @default("SALES") // SALES | ADMIN
   active       Boolean              @default(true)
+  isMainAdmin  Boolean              @default(false)
   createdAt    DateTime             @default(now())
   account      Account              @relation(fields: [accountId], references: [id])
   accountId    String
