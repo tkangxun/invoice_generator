@@ -1,10 +1,9 @@
 "use server";
 
-import bcrypt from "bcryptjs";
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/db";
 import { getSession, requireUser } from "@/lib/session";
-import { normalizeCompanyCode } from "@/lib/company-code";
+import { createAccount } from "@/lib/account";
 import { revalidatePath } from "next/cache";
 
 export type LoginState = { error?: string };
@@ -15,46 +14,18 @@ export async function login(
   _prev: LoginState,
   formData: FormData
 ): Promise<LoginState> {
-  const companyCode = normalizeCompanyCode(
-    String(formData.get("companyCode") ?? formData.get("company") ?? "")
-  );
-  const email = String(formData.get("email") ?? "")
-    .trim()
-    .toLowerCase();
-  const password = String(formData.get("password") ?? "");
-
-  if (!companyCode || !email || !password) {
-    return { error: LOGIN_ERROR };
-  }
-
-  const [company, user] = await Promise.all([
-    prisma.company.findUnique({
-      where: { code: companyCode },
-      select: { id: true },
-    }),
-    prisma.user.findUnique({ where: { email } }),
-  ]);
-
-  if (!company || !user || !user.active) {
-    return { error: LOGIN_ERROR };
-  }
-  if (!(await bcrypt.compare(password, user.passwordHash))) {
-    return { error: LOGIN_ERROR };
-  }
-
-  const membership = await prisma.companyMembership.findUnique({
-    where: {
-      userId_companyId: { userId: user.id, companyId: company.id },
-    },
-    select: { userId: true },
+  const result = await createAccount(prisma).signIn({
+    companyCode: String(formData.get("companyCode") ?? formData.get("company") ?? ""),
+    email: String(formData.get("email") ?? ""),
+    password: String(formData.get("password") ?? ""),
   });
-  if (!membership) return { error: LOGIN_ERROR };
+  if (!result.ok) return { error: LOGIN_ERROR };
 
   const session = await getSession();
-  session.userId = user.id;
-  session.name = user.name;
-  session.role = user.role;
-  session.companyId = company.id;
+  session.userId = result.userId;
+  session.name = result.name;
+  session.role = result.role;
+  session.companyId = result.companyId;
   await session.save();
 
   redirect("/dashboard");
@@ -71,13 +42,8 @@ export async function switchCompany(formData: FormData) {
   const companyId = String(formData.get("companyId") ?? "");
   if (!companyId || companyId === user.companyId) return;
 
-  const membership = await prisma.companyMembership.findUnique({
-    where: {
-      userId_companyId: { userId: user.userId, companyId },
-    },
-    select: { companyId: true },
-  });
-  if (!membership) return;
+  const companies = await createAccount(prisma).companiesFor(user.userId);
+  if (!companies.some((company) => company.id === companyId)) return;
 
   const session = await getSession();
   session.companyId = companyId;

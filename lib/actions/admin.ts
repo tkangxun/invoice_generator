@@ -8,7 +8,8 @@ import { getSession, requireAdmin, type AuthedUser } from "@/lib/session";
 import { dollarsToCents } from "@/lib/money";
 import { paidCents, statusFromPaid } from "@/lib/payments";
 import { isFollowUpInvoiceNumber, isReceiptNumber } from "@/lib/docs";
-import { COMPANY_DEFAULTS, defaultPriceListData, uniqueCompanyName } from "@/lib/company";
+import { defaultPriceListData, uniqueCompanyName } from "@/lib/company";
+import { createAccount } from "@/lib/account";
 import { uniqueCompanyCode } from "@/lib/company-code";
 import { parsePriceListCsv } from "@/lib/price-list-csv";
 import { ITEM_ORDER_BY } from "@/lib/item-order";
@@ -426,64 +427,24 @@ export async function importPriceList(
 
 export async function createUser(formData: FormData) {
   const admin = await requireAdmin();
-  const name = String(formData.get("name") ?? "").trim();
-  const email = String(formData.get("email") ?? "").trim().toLowerCase();
-  const password = String(formData.get("password") ?? "");
-  const role =
-    String(formData.get("role") ?? "SALES") === "ADMIN" ? "ADMIN" : "SALES";
-  if (!name || !email || password.length < 6) {
-    redirect("/admin/users?error=invalid");
-  }
-
-  const existing = await prisma.user.findUnique({ where: { email } });
-  if (existing) {
-    if (role === "ADMIN" && existing.role === "ADMIN") {
-      await prisma.companyMembership.upsert({
-        where: {
-          userId_companyId: {
-            userId: existing.id,
-            companyId: admin.companyId,
-          },
-        },
-        create: { userId: existing.id, companyId: admin.companyId },
-        update: {},
-      });
-      revalidatePath("/admin/users");
-      redirect("/admin/users?added=1");
-    }
-    if (role === "SALES" && existing.role === "SALES") {
-      const memberships = await prisma.companyMembership.findMany({
-        where: { userId: existing.id },
-        select: { companyId: true },
-      });
-      if (memberships.some((row) => row.companyId === admin.companyId)) {
-        redirect("/admin/users?error=email-exists");
-      }
-      if (memberships.length > 0) {
-        redirect("/admin/users?error=sales-other-company");
-      }
-      await prisma.companyMembership.create({
-        data: { userId: existing.id, companyId: admin.companyId },
-      });
-      revalidatePath("/admin/users");
-      redirect("/admin/users?added=1");
-    }
-    redirect("/admin/users?error=email-exists");
-  }
-
-  const created = await prisma.user.create({
-    data: {
-      name,
-      email,
-      role,
-      passwordHash: await bcrypt.hash(password, 10),
-    },
+  const result = await createAccount(prisma).addPerson(admin.userId, {
+    name: String(formData.get("name") ?? ""),
+    email: String(formData.get("email") ?? ""),
+    password: String(formData.get("password") ?? ""),
+    role: String(formData.get("role") ?? "SALES") === "ADMIN" ? "ADMIN" : "SALES",
+    companyId: admin.companyId,
   });
-  await prisma.companyMembership.create({
-    data: { userId: created.id, companyId: admin.companyId },
-  });
+  if (!result.ok) {
+    const error =
+      result.error === "forbidden"
+        ? "invalid"
+        : result.error === "seats-full"
+          ? "seats-full"
+          : result.error;
+    redirect(`/admin/users?error=${error}`);
+  }
   revalidatePath("/admin/users");
-  redirect("/admin/users");
+  redirect(result.created ? "/admin/users" : "/admin/users?added=1");
 }
 
 function adminUsersPath(opts: { status?: string; error?: string } = {}) {
@@ -515,10 +476,17 @@ export async function toggleUserActive(userId: string) {
   if (!(await memberOfCurrentCompany(admin, userId))) return;
   const user = await prisma.user.findUnique({ where: { id: userId } });
   if (!user) return;
-  await prisma.user.update({
-    where: { id: userId },
-    data: { active: !user.active },
-  });
+  const result = await createAccount(prisma).setActive(
+    admin.userId,
+    userId,
+    !user.active
+  );
+  if (!result.ok && result.error === "seats-full") {
+    redirect(adminUsersPath({ error: "seats-full" }));
+  }
+  if (!result.ok && result.error === "main-admin") {
+    redirect(adminUsersPath({ error: "main-admin" }));
+  }
   revalidatePath("/admin/users");
 }
 
@@ -538,6 +506,10 @@ export async function deleteUser(userId: string, formData: FormData) {
   });
   if (!target) return;
 
+  if (target.isMainAdmin) {
+    redirect(adminUsersPath({ status, error: "main-admin" }));
+  }
+
   if (target.role === "ADMIN" && target._count.memberships > 1) {
     await prisma.companyMembership.delete({
       where: {
@@ -552,7 +524,10 @@ export async function deleteUser(userId: string, formData: FormData) {
     redirect(adminUsersPath({ status, error: "has-records" }));
   }
 
-  await prisma.user.delete({ where: { id: userId } });
+  const removed = await createAccount(prisma).removePerson(admin.userId, userId);
+  if (!removed.ok) {
+    redirect(adminUsersPath({ status, error: removed.error }));
+  }
   revalidatePath("/admin/users");
   redirect(adminUsersPath({ status }));
 }
@@ -575,7 +550,9 @@ export async function grantAdmin(formData: FormData) {
   const admin = await requireAdmin();
   const email = String(formData.get("email") ?? "").trim().toLowerCase();
   if (!email) redirect("/admin/companies?error=invalid");
-  const target = await prisma.user.findUnique({ where: { email } });
+  const target = await prisma.user.findUnique({
+    where: { accountId_email: { accountId: admin.accountId, email } },
+  });
   if (!target || target.role !== "ADMIN") {
     redirect("/admin/companies?error=admin-not-found");
   }
@@ -630,33 +607,14 @@ export async function createCompany(
     return { error: "Company name is required." };
   }
 
-  const current = await prisma.company.findUnique({
-    where: { id: admin.companyId },
-  });
-  if (!current) return { error: "Current company not found." };
-
-  const code = await uniqueCompanyCode(prisma, requestedName);
-  const name = await uniqueCompanyName(requestedName);
   const created = await prisma.$transaction(async (tx) => {
-    const company = await tx.company.create({
-      data: {
-        code,
-        name,
-        brand: current.brand || COMPANY_DEFAULTS.brand,
-        tagline: current.tagline || COMPANY_DEFAULTS.tagline,
-        legalName: current.legalName || COMPANY_DEFAULTS.legalName,
-        uen: current.uen || COMPANY_DEFAULTS.uen,
-        address: current.address || COMPANY_DEFAULTS.address,
-        paymentTerms: current.paymentTerms || COMPANY_DEFAULTS.paymentTerms,
-        logoMime: current.logoMime,
-        logoBytes: current.logoBytes,
-        paynowQrMime: current.paynowQrMime,
-        paynowQrBytes: current.paynowQrBytes,
-      },
+    const result = await createAccount(tx).createCompany(admin.userId, {
+      name: requestedName,
+      currentCompanyId: admin.companyId,
     });
-    await tx.companyMembership.create({
-      data: { userId: admin.userId, companyId: company.id },
-    });
+    if (!result.ok) return result;
+
+    const company = { id: result.companyId, code: result.code };
     const methods = await tx.paymentMethod.findMany({
       where: { companyId: admin.companyId },
       orderBy: { sortOrder: "asc" },
@@ -729,6 +687,10 @@ export async function createCompany(
     return company;
   });
 
+  if (!("code" in created)) {
+    return { error: "Current company not found." };
+  }
+
   revalidatePath("/admin/companies");
   redirect(`/admin/companies?created=${encodeURIComponent(created.code)}`);
 }
@@ -744,7 +706,7 @@ export async function updateCompany(companyId: string, formData: FormData) {
   const name = String(formData.get("name") ?? "").trim();
   if (!name) return;
 
-  const uniqueName = await uniqueCompanyName(name, companyId);
+  const uniqueName = await uniqueCompanyName(prisma, name, admin.accountId, companyId);
   await prisma.company.update({
     where: { id: companyId },
     data: {
@@ -766,7 +728,7 @@ export async function deleteCompany(companyId: string) {
   if (!membership) return;
 
   const remainingCompanies = await prisma.company.count({
-    where: { id: { not: companyId } },
+    where: { accountId: admin.accountId, id: { not: companyId } },
   });
   if (remainingCompanies === 0) {
     redirect("/admin/companies?error=last-company");
@@ -895,7 +857,12 @@ export async function updateCompanySettings(
     };
   }
 
-  const uniqueName = await uniqueCompanyName(name, admin.companyId);
+  const uniqueName = await uniqueCompanyName(
+    prisma,
+    name,
+    admin.accountId,
+    admin.companyId
+  );
   await prisma.company.update({
     where: { id: admin.companyId },
     data: {

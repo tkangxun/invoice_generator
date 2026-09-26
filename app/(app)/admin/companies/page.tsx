@@ -15,7 +15,10 @@ export default async function AdminCompaniesPage({
 
   const [held, admins] = await Promise.all([
     prisma.companyMembership.findMany({
-      where: { userId: admin.userId },
+      where: {
+        userId: admin.userId,
+        company: { accountId: admin.accountId },
+      },
       orderBy: { company: { name: "asc" } },
       select: {
         company: {

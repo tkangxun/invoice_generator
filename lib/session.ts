@@ -10,7 +10,7 @@ export type SessionData = {
   companyId?: string;
 };
 
-function sessionOptions(): SessionOptions {
+export function sessionOptionsFor(cookieName: string, maxAge?: number): SessionOptions {
   const secret = process.env.SESSION_SECRET ?? "";
   if (secret.length < 32) {
     // next build imports these pages before Railway injects runtime variables.
@@ -20,8 +20,8 @@ function sessionOptions(): SessionOptions {
     ) {
       return {
         password: "build-time-placeholder-secret-min-32-chars",
-        cookieName: "invoice_app_session",
-        cookieOptions: { secure: true, httpOnly: true, sameSite: "lax" },
+        cookieName,
+        cookieOptions: { secure: true, httpOnly: true, sameSite: "lax", maxAge },
       };
     }
     throw new Error(
@@ -30,23 +30,25 @@ function sessionOptions(): SessionOptions {
   }
   return {
     password: secret,
-    cookieName: "invoice_app_session",
+    cookieName,
     cookieOptions: {
       secure: process.env.NODE_ENV === "production",
       httpOnly: true,
       sameSite: "lax",
+      maxAge,
     },
   };
 }
 
 export async function getSession() {
-  return getIronSession<SessionData>(await cookies(), sessionOptions());
+  return getIronSession<SessionData>(await cookies(), sessionOptionsFor("invoice_app_session"));
 }
 
 export type AuthedUser = {
   userId: string;
   name: string;
   role: string;
+  accountId: string;
   companyId: string;
   companyName: string;
   companyCode: string;
@@ -65,7 +67,7 @@ async function loadAuthedUser(): Promise<AuthedUser | null> {
     },
     select: {
       company: { select: { id: true, name: true, code: true } },
-      user: { select: { id: true, name: true, role: true, active: true } },
+      user: { select: { id: true, name: true, role: true, active: true, accountId: true } },
     },
   });
   if (!membership?.user.active) return null;
@@ -74,6 +76,7 @@ async function loadAuthedUser(): Promise<AuthedUser | null> {
     userId: membership.user.id,
     name: membership.user.name,
     role: membership.user.role,
+    accountId: membership.user.accountId,
     companyId: membership.company.id,
     companyName: membership.company.name,
     companyCode: membership.company.code,

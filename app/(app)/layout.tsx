@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/session";
 import { logout, switchCompany } from "@/lib/actions/auth";
+import { createAccount } from "@/lib/account";
 import { AppNav } from "@/components/AppNav";
 
 export default async function AppLayout({
@@ -9,13 +10,7 @@ export default async function AppLayout({
   children: React.ReactNode;
 }) {
   const user = await requireUser();
-  const held = await prisma.companyMembership.findMany({
-    where: { userId: user.userId },
-    orderBy: { company: { name: "asc" } },
-    select: {
-      company: { select: { id: true, name: true, code: true } },
-    },
-  });
+  const held = await createAccount(prisma).companiesFor(user.userId);
 
   return (
     <div className="flex min-h-screen flex-col">
@@ -25,7 +20,7 @@ export default async function AppLayout({
         companyName={user.companyName}
         companyCode={user.companyCode}
         currentCompanyId={user.companyId}
-        companies={held.map((row) => row.company)}
+        companies={held}
         switchCompanyAction={switchCompany}
         logoutAction={logout}
       />
