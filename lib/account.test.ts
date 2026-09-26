@@ -276,12 +276,24 @@ const newCustomer = {
   companyCode: "new-co",
 };
 
+function unusedPackPayment() {
+  return {
+    async chargeFirstPack() {
+      return { ok: false as const };
+    },
+    async setPackQuantity() {
+      return { ok: false as const };
+    },
+  };
+}
+
 test("a taken company ID is refused before payment", async () => {
   await openOperator();
   let charged = false;
   const result = await account.signUp(
     { ...newCustomer, companyCode: "alpha-vitality" },
     {
+      ...unusedPackPayment(),
       async chargeFirstPack() {
         charged = true;
         return { ok: true, customerId: "cus_should_not", subscriptionId: "sub_should_not" };
@@ -296,6 +308,7 @@ test("a failed payment leaves no account, person, or company", async () => {
   const result = await account.signUp(
     { ...newCustomer, companyCode: "unpaid-co" },
     {
+      ...unusedPackPayment(),
       async chargeFirstPack() {
         return { ok: false };
       },
@@ -317,6 +330,7 @@ test("paying for the first pack creates the main admin with 4 seats left", async
   const signedUp = await account.signUp(
     { ...newCustomer, email: "admin@example.com" },
     {
+      ...unusedPackPayment(),
       async chargeFirstPack(input) {
         charged = input;
         return { ok: true, customerId: "cus_123", subscriptionId: "sub_123" };
@@ -378,6 +392,7 @@ test("the same email cannot be a second person on one account", async () => {
 async function signUpCustomer(overrides: Partial<typeof newCustomer> = {}) {
   const input = { ...newCustomer, ...overrides };
   const signedUp = await account.signUp(input, {
+    ...unusedPackPayment(),
     async chargeFirstPack() {
       return {
         ok: true,
@@ -388,6 +403,20 @@ async function signUpCustomer(overrides: Partial<typeof newCustomer> = {}) {
   });
   if (!signedUp.ok) throw new Error(signedUp.error);
   return signedUp;
+}
+
+function trackingPackPayment() {
+  const calls: { subscriptionId: string; quantity: number }[] = [];
+  return {
+    payment: {
+      ...unusedPackPayment(),
+      async setPackQuantity(input: { subscriptionId: string; quantity: number }) {
+        calls.push(input);
+        return { ok: true as const };
+      },
+    },
+    calls,
+  };
 }
 
 async function fillRemainingSeats(
@@ -667,4 +696,147 @@ test("the operator account can add people with no seat refusal", async () => {
     ok: false,
     error: "forbidden",
   });
+});
+
+test("buying a pack increases the subscription quantity by 1 and adds 5 seats", async () => {
+  const customer = await signUpCustomer({
+    companyCode: "buy-co",
+    companyName: "Buy Co",
+  });
+  const { payment, calls } = trackingPackPayment();
+
+  expect(await account.buyPack(customer.userId, payment)).toEqual({
+    ok: true,
+    quantity: 2,
+  });
+  expect(calls).toEqual([{ subscriptionId: "sub_buy-co", quantity: 2 }]);
+  expect(await account.seats(customer.accountId)).toEqual({
+    packs: 2,
+    purchased: 10,
+    used: 1,
+    free: 9,
+  });
+  expect(await account.subscription(customer.accountId)).toEqual({
+    quantity: 2,
+    interval: "month",
+    currency: "SGD",
+  });
+  expect(await account.billFor(customer.userId)).toEqual({
+    ok: true,
+    quantity: 2,
+    interval: "month",
+    currency: "SGD",
+  });
+});
+
+test("dropping a pack is allowed when at least 5 seats are unused", async () => {
+  const customer = await signUpCustomer({
+    companyCode: "drop-ok",
+    companyName: "Drop Ok",
+  });
+  const buy = trackingPackPayment();
+  expect(await account.buyPack(customer.userId, buy.payment)).toEqual({
+    ok: true,
+    quantity: 2,
+  });
+  expect(await account.seats(customer.accountId)).toMatchObject({
+    purchased: 10,
+    used: 1,
+    free: 9,
+  });
+
+  const drop = trackingPackPayment();
+  expect(await account.dropPack(customer.userId, drop.payment)).toEqual({
+    ok: true,
+    quantity: 1,
+  });
+  expect(drop.calls).toEqual([{ subscriptionId: "sub_drop-ok", quantity: 1 }]);
+  expect(await account.seats(customer.accountId)).toEqual({
+    packs: 1,
+    purchased: 5,
+    used: 1,
+    free: 4,
+  });
+});
+
+test("dropping a pack is refused when fewer than 5 seats are unused", async () => {
+  const customer = await signUpCustomer({
+    companyCode: "drop-busy",
+    companyName: "Drop Busy",
+  });
+  const buy = trackingPackPayment();
+  expect(await account.buyPack(customer.userId, buy.payment)).toEqual({
+    ok: true,
+    quantity: 2,
+  });
+  await fillRemainingSeats(customer.userId, customer.companyId, 5, "busy");
+  expect(await account.seats(customer.accountId)).toMatchObject({
+    purchased: 10,
+    used: 6,
+    free: 4,
+  });
+
+  const drop = trackingPackPayment();
+  expect(await account.dropPack(customer.userId, drop.payment)).toEqual({
+    ok: false,
+    error: "in-use",
+  });
+  expect(drop.calls).toEqual([]);
+  expect(await account.seats(customer.accountId)).toMatchObject({
+    packs: 2,
+    purchased: 10,
+  });
+});
+
+test("the first pack cannot be dropped", async () => {
+  const customer = await signUpCustomer({
+    companyCode: "one-pack",
+    companyName: "One Pack",
+  });
+  expect(await account.seats(customer.accountId)).toMatchObject({
+    packs: 1,
+    free: 4,
+  });
+
+  const drop = trackingPackPayment();
+  expect(await account.dropPack(customer.userId, drop.payment)).toEqual({
+    ok: false,
+    error: "last-pack",
+  });
+  expect(drop.calls).toEqual([]);
+  expect(await account.subscription(customer.accountId)).toEqual({
+    quantity: 1,
+    interval: "month",
+    currency: "SGD",
+  });
+});
+
+test("other admins cannot see the bill or change packs", async () => {
+  const customer = await signUpCustomer({
+    companyCode: "pack-gate",
+    companyName: "Pack Gate",
+  });
+  const other = await account.addPerson(customer.userId, {
+    name: "Other Admin",
+    email: "pack-other@example.com",
+    password: "admin123",
+    role: "ADMIN",
+    companyId: customer.companyId,
+  });
+  if (!other.ok) throw new Error(other.error);
+
+  const payment = trackingPackPayment().payment;
+  expect(await account.billFor(other.userId)).toEqual({
+    ok: false,
+    error: "forbidden",
+  });
+  expect(await account.buyPack(other.userId, payment)).toEqual({
+    ok: false,
+    error: "forbidden",
+  });
+  expect(await account.dropPack(other.userId, payment)).toEqual({
+    ok: false,
+    error: "forbidden",
+  });
+  expect(await account.seats(customer.accountId)).toMatchObject({ packs: 1 });
 });

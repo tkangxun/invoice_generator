@@ -25,6 +25,30 @@ export async function createFirstPackCheckout(input: { email: string; origin: st
   return session.url;
 }
 
+async function setStripePackQuantity(subscriptionId: string, quantity: number) {
+  const stripe = stripeClient();
+  if (!stripe || !subscriptionId || quantity < 1) return { ok: false as const };
+  const subscription = await stripe.subscriptions.retrieve(subscriptionId);
+  const itemId = subscription.items.data[0]?.id;
+  if (!itemId) return { ok: false as const };
+  await stripe.subscriptions.update(subscriptionId, {
+    items: [{ id: itemId, quantity }],
+    proration_behavior: "create_prorations",
+  });
+  return { ok: true as const };
+}
+
+export function stripePaymentPort(): PaymentPort {
+  return {
+    async chargeFirstPack() {
+      return { ok: false };
+    },
+    async setPackQuantity(input) {
+      return setStripePackQuantity(input.subscriptionId, input.quantity);
+    },
+  };
+}
+
 export function paymentForCheckoutSession(sessionId: string): PaymentPort {
   return {
     async chargeFirstPack() {
@@ -40,6 +64,9 @@ export function paymentForCheckoutSession(sessionId: string): PaymentPort {
           : session.subscription?.id;
       if (!customerId || !subscriptionId) return { ok: false };
       return { ok: true, customerId, subscriptionId };
+    },
+    async setPackQuantity() {
+      return { ok: false };
     },
   };
 }

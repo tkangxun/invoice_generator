@@ -66,6 +66,17 @@ export type BillForResult =
   | { ok: true; quantity: number; interval: string; currency: string }
   | { ok: false; error: "forbidden" };
 
+export type BuyPackResult =
+  | { ok: true; quantity: number }
+  | { ok: false; error: "forbidden" | "payment-failed" };
+
+export type DropPackResult =
+  | { ok: true; quantity: number }
+  | {
+      ok: false;
+      error: "forbidden" | "in-use" | "last-pack" | "payment-failed";
+    };
+
 export type CreateCompanyResult =
   | { ok: true; companyId: string; code: string; name: string }
   | { ok: false; error: "invalid" | "forbidden" };
@@ -553,6 +564,77 @@ export function createAccount(db: AccountDb) {
       const bill = await this.subscription(actor.accountId);
       if (!bill) return { ok: false, error: "forbidden" };
       return { ok: true, ...bill };
+    },
+
+    async buyPack(
+      actorUserId: string,
+      payment: PaymentPort
+    ): Promise<BuyPackResult> {
+      const actor = await db.user.findUnique({ where: { id: actorUserId } });
+      if (!actor?.active || actor.role !== "ADMIN" || !actor.isMainAdmin) {
+        return { ok: false, error: "forbidden" };
+      }
+      const account = await db.account.findUnique({
+        where: { id: actor.accountId },
+        select: {
+          exempt: true,
+          packCount: true,
+          stripeSubscriptionId: true,
+        },
+      });
+      if (!account || account.exempt || !account.stripeSubscriptionId) {
+        return { ok: false, error: "forbidden" };
+      }
+      const quantity = account.packCount + 1;
+      const paid = await payment.setPackQuantity({
+        subscriptionId: account.stripeSubscriptionId,
+        quantity,
+      });
+      if (!paid.ok) return { ok: false, error: "payment-failed" };
+      await db.account.update({
+        where: { id: actor.accountId },
+        data: { packCount: quantity },
+      });
+      return { ok: true, quantity };
+    },
+
+    async dropPack(
+      actorUserId: string,
+      payment: PaymentPort
+    ): Promise<DropPackResult> {
+      const actor = await db.user.findUnique({ where: { id: actorUserId } });
+      if (!actor?.active || actor.role !== "ADMIN" || !actor.isMainAdmin) {
+        return { ok: false, error: "forbidden" };
+      }
+      const account = await db.account.findUnique({
+        where: { id: actor.accountId },
+        select: {
+          exempt: true,
+          packCount: true,
+          stripeSubscriptionId: true,
+        },
+      });
+      if (!account || account.exempt || !account.stripeSubscriptionId) {
+        return { ok: false, error: "forbidden" };
+      }
+      if (account.packCount <= 1) {
+        return { ok: false, error: "last-pack" };
+      }
+      const state = await seatState(actor.accountId);
+      if (!state || state.exempt || state.free < 5) {
+        return { ok: false, error: "in-use" };
+      }
+      const quantity = account.packCount - 1;
+      const paid = await payment.setPackQuantity({
+        subscriptionId: account.stripeSubscriptionId,
+        quantity,
+      });
+      if (!paid.ok) return { ok: false, error: "payment-failed" };
+      await db.account.update({
+        where: { id: actor.accountId },
+        data: { packCount: quantity },
+      });
+      return { ok: true, quantity };
     },
 
     async person(userId: string) {
