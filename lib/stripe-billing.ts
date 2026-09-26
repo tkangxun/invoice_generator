@@ -46,6 +46,12 @@ export function stripePaymentPort(): PaymentPort {
     async setPackQuantity(input) {
       return setStripePackQuantity(input.subscriptionId, input.quantity);
     },
+    async renewalFailure() {
+      return { ok: false };
+    },
+    async paymentSuccess() {
+      return { ok: false };
+    },
   };
 }
 
@@ -66,6 +72,12 @@ export function paymentForCheckoutSession(sessionId: string): PaymentPort {
       return { ok: true, customerId, subscriptionId };
     },
     async setPackQuantity() {
+      return { ok: false };
+    },
+    async renewalFailure() {
+      return { ok: false };
+    },
+    async paymentSuccess() {
       return { ok: false };
     },
   };

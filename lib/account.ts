@@ -24,6 +24,8 @@ export type OpenAccountResult =
     }
   | { ok: false; error: "invalid" | "company-id-taken" };
 
+export type SignInAccess = "full" | "billing" | "pay-only";
+
 export type SignInResult =
   | {
       ok: true;
@@ -31,6 +33,7 @@ export type SignInResult =
       name: string;
       role: string;
       companyId: string;
+      access: SignInAccess;
     }
   | { ok: false; error: "invalid" };
 
@@ -46,12 +49,18 @@ export type AddPersonResult =
   | { ok: true; userId: string; created: boolean }
   | {
       ok: false;
-      error: "invalid" | "email-exists" | "sales-other-company" | "forbidden" | "seats-full";
+      error:
+        | "invalid"
+        | "email-exists"
+        | "sales-other-company"
+        | "forbidden"
+        | "seats-full"
+        | "billing";
     };
 
 export type SetActiveResult =
   | { ok: true }
-  | { ok: false; error: "forbidden" | "main-admin" | "seats-full" };
+  | { ok: false; error: "forbidden" | "main-admin" | "seats-full" | "billing" };
 
 export type RemovePersonResult =
   | { ok: true }
@@ -79,6 +88,10 @@ export type DropPackResult =
 
 export type CreateCompanyResult =
   | { ok: true; companyId: string; code: string; name: string }
+  | { ok: false; error: "invalid" | "forbidden" | "billing" };
+
+export type BillingReportResult =
+  | { ok: true }
   | { ok: false; error: "invalid" | "forbidden" };
 
 export type CompanyChoice = { id: string; name: string; code: string };
@@ -107,11 +120,15 @@ const FIRST_PACK = {
   currency: "SGD",
 } as const;
 
+const GRACE_MS = 7 * 24 * 60 * 60 * 1000;
+
 const INVALID_SIGN_IN = { ok: false as const, error: "invalid" as const };
 
 function normalizeEmail(email: string) {
   return email.trim().toLowerCase();
 }
+
+type BillingPhase = "active" | "grace" | "locked" | "exempt";
 
 export function createAccount(db: AccountDb) {
   async function seatState(accountId: string) {
@@ -143,6 +160,21 @@ export function createAccount(db: AccountDb) {
     if (state.exempt) return { ok: true };
     if (state.free < 1) return { ok: false, error: "seats-full" };
     return { ok: true };
+  }
+
+  async function billingPhase(
+    accountId: string,
+    now = new Date()
+  ): Promise<BillingPhase | null> {
+    const account = await db.account.findUnique({
+      where: { id: accountId },
+      select: { exempt: true, graceEndsAt: true },
+    });
+    if (!account) return null;
+    if (account.exempt) return "exempt";
+    if (!account.graceEndsAt) return "active";
+    if (now.getTime() < account.graceEndsAt.getTime()) return "grace";
+    return "locked";
   }
 
   return {
@@ -235,12 +267,22 @@ export function createAccount(db: AccountDb) {
       });
       if (!membership) return INVALID_SIGN_IN;
 
+      const phase = await billingPhase(company.accountId);
+      let access: SignInAccess = "full";
+      if (phase === "grace" && user.isMainAdmin) {
+        access = "billing";
+      } else if (phase === "locked") {
+        if (!user.isMainAdmin) return INVALID_SIGN_IN;
+        access = "pay-only";
+      }
+
       return {
         ok: true,
         userId: user.id,
         name: user.name,
         role: user.role,
         companyId: company.id,
+        access,
       };
     },
 
@@ -288,6 +330,11 @@ export function createAccount(db: AccountDb) {
         select: { userId: true },
       });
       if (!actorMembership) return { ok: false, error: "forbidden" };
+
+      const phase = await billingPhase(actor.accountId);
+      if (phase === "grace" || phase === "locked") {
+        return { ok: false, error: "billing" };
+      }
 
       const existing = await db.user.findUnique({
         where: { accountId_email: { accountId: actor.accountId, email } },
@@ -369,6 +416,11 @@ export function createAccount(db: AccountDb) {
         select: { userId: true },
       });
       if (!membership) return { ok: false, error: "forbidden" };
+
+      const phase = await billingPhase(actor.accountId);
+      if (phase === "locked") {
+        return { ok: false, error: "billing" };
+      }
 
       const name = await uniqueCompanyName(db, requestedName, actor.accountId);
       const code = await uniqueCompanyCode(db, requestedName);
@@ -663,6 +715,10 @@ export function createAccount(db: AccountDb) {
       if (active === target.active) {
         return { ok: true };
       }
+      const phase = await billingPhase(actor.accountId);
+      if (phase === "locked" || (phase === "grace" && active)) {
+        return { ok: false, error: "billing" };
+      }
       if (active) {
         const seat = await requireFreeSeat(actor.accountId);
         if (!seat.ok) return seat;
@@ -687,6 +743,50 @@ export function createAccount(db: AccountDb) {
         return { ok: false, error: "main-admin" };
       }
       await db.user.delete({ where: { id: userId } });
+      return { ok: true };
+    },
+
+    async reportRenewalFailure(
+      accountId: string,
+      payment: PaymentPort
+    ): Promise<BillingReportResult> {
+      const account = await db.account.findUnique({
+        where: { id: accountId },
+        select: { exempt: true, stripeSubscriptionId: true },
+      });
+      if (!account) return { ok: false, error: "invalid" };
+      if (account.exempt) return { ok: true };
+      if (!account.stripeSubscriptionId) return { ok: false, error: "invalid" };
+
+      const report = await payment.renewalFailure(account.stripeSubscriptionId);
+      if (!report.ok) return { ok: false, error: "invalid" };
+
+      await db.account.update({
+        where: { id: accountId },
+        data: { graceEndsAt: new Date(report.failedAt.getTime() + GRACE_MS) },
+      });
+      return { ok: true };
+    },
+
+    async reportPaymentSuccess(
+      accountId: string,
+      payment: PaymentPort
+    ): Promise<BillingReportResult> {
+      const account = await db.account.findUnique({
+        where: { id: accountId },
+        select: { exempt: true, stripeSubscriptionId: true },
+      });
+      if (!account) return { ok: false, error: "invalid" };
+      if (account.exempt) return { ok: true };
+      if (!account.stripeSubscriptionId) return { ok: false, error: "invalid" };
+
+      const report = await payment.paymentSuccess(account.stripeSubscriptionId);
+      if (!report.ok) return { ok: false, error: "invalid" };
+
+      await db.account.update({
+        where: { id: accountId },
+        data: { graceEndsAt: null },
+      });
       return { ok: true };
     },
   };

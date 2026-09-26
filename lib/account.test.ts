@@ -75,6 +75,7 @@ test("the operator account is exempt and its admin can sign in", async () => {
     name: "Admin",
     role: "ADMIN",
     companyId: opened.companyId,
+    access: "full",
   });
 });
 
@@ -284,6 +285,12 @@ function unusedPackPayment() {
     async setPackQuantity() {
       return { ok: false as const };
     },
+    async renewalFailure() {
+      return { ok: false as const };
+    },
+    async paymentSuccess() {
+      return { ok: false as const };
+    },
   };
 }
 
@@ -298,6 +305,12 @@ test("a taken company ID is refused before payment", async () => {
         charged = true;
         return { ok: true, customerId: "cus_should_not", subscriptionId: "sub_should_not" };
       },
+      async renewalFailure() {
+        return { ok: false };
+      },
+      async paymentSuccess() {
+        return { ok: false };
+      },
     }
   );
   expect(result).toEqual({ ok: false, error: "company-id-taken" });
@@ -310,6 +323,12 @@ test("a failed payment leaves no account, person, or company", async () => {
     {
       ...unusedPackPayment(),
       async chargeFirstPack() {
+        return { ok: false };
+      },
+      async renewalFailure() {
+        return { ok: false };
+      },
+      async paymentSuccess() {
         return { ok: false };
       },
     }
@@ -334,6 +353,12 @@ test("paying for the first pack creates the main admin with 4 seats left", async
       async chargeFirstPack(input) {
         charged = input;
         return { ok: true, customerId: "cus_123", subscriptionId: "sub_123" };
+      },
+      async renewalFailure() {
+        return { ok: false };
+      },
+      async paymentSuccess() {
+        return { ok: false };
       },
     }
   );
@@ -400,6 +425,12 @@ async function signUpCustomer(overrides: Partial<typeof newCustomer> = {}) {
         subscriptionId: `sub_${input.companyCode}`,
       };
     },
+    async renewalFailure() {
+      return { ok: false };
+    },
+    async paymentSuccess() {
+      return { ok: false };
+    },
   });
   if (!signedUp.ok) throw new Error(signedUp.error);
   return signedUp;
@@ -416,6 +447,25 @@ function trackingPackPayment() {
       },
     },
     calls,
+  };
+}
+
+function paymentPort(options?: { failedAt?: Date; paymentOk?: boolean }) {
+  return {
+    async chargeFirstPack() {
+      return { ok: false as const };
+    },
+    async setPackQuantity() {
+      return { ok: false as const };
+    },
+    async renewalFailure() {
+      if (!options?.failedAt) return { ok: false as const };
+      return { ok: true as const, failedAt: options.failedAt };
+    },
+    async paymentSuccess() {
+      if (options?.paymentOk === false) return { ok: false as const };
+      return { ok: true as const };
+    },
   };
 }
 
@@ -839,4 +889,218 @@ test("other admins cannot see the bill or change packs", async () => {
     error: "forbidden",
   });
   expect(await account.seats(customer.accountId)).toMatchObject({ packs: 1 });
+});
+
+test("a renewal failure starts a 7-day grace: people work, add is refused, company ok, main admin to billing", async () => {
+  const customer = await signUpCustomer({
+    companyCode: "grace-co",
+    companyName: "Grace Co",
+  });
+  const sales = await account.addPerson(customer.userId, {
+    name: "Sales",
+    email: "sales-grace@example.com",
+    password: "sales123",
+    role: "SALES",
+    companyId: customer.companyId,
+  });
+  if (!sales.ok) throw new Error(sales.error);
+
+  const failedAt = new Date();
+  expect(
+    await account.reportRenewalFailure(customer.accountId, paymentPort({ failedAt }))
+  ).toEqual({ ok: true });
+
+  expect(
+    await account.signIn({
+      companyCode: "grace-co",
+      email: "sales-grace@example.com",
+      password: "sales123",
+    })
+  ).toEqual({
+    ok: true,
+    userId: sales.userId,
+    name: "Sales",
+    role: "SALES",
+    companyId: customer.companyId,
+    access: "full",
+  });
+  expect(
+    await account.signIn({
+      companyCode: "grace-co",
+      email: "new@example.com",
+      password: "secret1",
+    })
+  ).toEqual({
+    ok: true,
+    userId: customer.userId,
+    name: "New Admin",
+    role: "ADMIN",
+    companyId: customer.companyId,
+    access: "billing",
+  });
+
+  expect(
+    await account.addPerson(customer.userId, {
+      name: "Extra",
+      email: "extra-grace@example.com",
+      password: "sales123",
+      role: "SALES",
+      companyId: customer.companyId,
+    })
+  ).toEqual({ ok: false, error: "billing" });
+
+  const created = await account.createCompany(customer.userId, {
+    name: "Grace Brand Two",
+    currentCompanyId: customer.companyId,
+  });
+  expect(created.ok).toBe(true);
+});
+
+test("after 7 days without payment, only the main admin can sign in, and only to pay", async () => {
+  const customer = await signUpCustomer({
+    companyCode: "lock-co",
+    companyName: "Lock Co",
+  });
+  const sales = await account.addPerson(customer.userId, {
+    name: "Sales",
+    email: "sales-lock@example.com",
+    password: "sales123",
+    role: "SALES",
+    companyId: customer.companyId,
+  });
+  if (!sales.ok) throw new Error(sales.error);
+
+  const failedAt = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+  expect(
+    await account.reportRenewalFailure(customer.accountId, paymentPort({ failedAt }))
+  ).toEqual({ ok: true });
+
+  expect(
+    await account.signIn({
+      companyCode: "lock-co",
+      email: "sales-lock@example.com",
+      password: "sales123",
+    })
+  ).toEqual({ ok: false, error: "invalid" });
+  expect(
+    await account.signIn({
+      companyCode: "lock-co",
+      email: "new@example.com",
+      password: "secret1",
+    })
+  ).toEqual({
+    ok: true,
+    userId: customer.userId,
+    name: "New Admin",
+    role: "ADMIN",
+    companyId: customer.companyId,
+    access: "pay-only",
+  });
+
+  expect(
+    await account.createCompany(customer.userId, {
+      name: "Locked Brand",
+      currentCompanyId: customer.companyId,
+    })
+  ).toEqual({ ok: false, error: "billing" });
+  expect(
+    await account.addPerson(customer.userId, {
+      name: "Extra",
+      email: "extra-lock@example.com",
+      password: "sales123",
+      role: "SALES",
+      companyId: customer.companyId,
+    })
+  ).toEqual({ ok: false, error: "billing" });
+});
+
+test("a successful payment clears grace and restores sign-in and adding", async () => {
+  const customer = await signUpCustomer({
+    companyCode: "clear-co",
+    companyName: "Clear Co",
+  });
+  const sales = await account.addPerson(customer.userId, {
+    name: "Sales",
+    email: "sales-clear@example.com",
+    password: "sales123",
+    role: "SALES",
+    companyId: customer.companyId,
+  });
+  if (!sales.ok) throw new Error(sales.error);
+
+  const failedAt = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000);
+  expect(
+    await account.reportRenewalFailure(customer.accountId, paymentPort({ failedAt }))
+  ).toEqual({ ok: true });
+  expect(
+    await account.signIn({
+      companyCode: "clear-co",
+      email: "sales-clear@example.com",
+      password: "sales123",
+    })
+  ).toEqual({ ok: false, error: "invalid" });
+
+  expect(
+    await account.reportPaymentSuccess(customer.accountId, paymentPort({ paymentOk: true }))
+  ).toEqual({ ok: true });
+
+  expect(
+    await account.signIn({
+      companyCode: "clear-co",
+      email: "sales-clear@example.com",
+      password: "sales123",
+    })
+  ).toMatchObject({ ok: true, userId: sales.userId, access: "full" });
+  expect(
+    await account.signIn({
+      companyCode: "clear-co",
+      email: "new@example.com",
+      password: "secret1",
+    })
+  ).toMatchObject({ ok: true, userId: customer.userId, access: "full" });
+  expect(
+    await account.addPerson(customer.userId, {
+      name: "After Pay",
+      email: "after-pay@example.com",
+      password: "sales123",
+      role: "SALES",
+      companyId: customer.companyId,
+    })
+  ).toMatchObject({ ok: true, created: true });
+});
+
+test("the operator account is never locked by a failed renewal", async () => {
+  const opened = await openOperator();
+  const sales = await account.addPerson(opened.userId, {
+    name: "Op Sales",
+    email: "op-sales@example.com",
+    password: "sales123",
+    role: "SALES",
+    companyId: opened.companyId,
+  });
+  if (!sales.ok) throw new Error(sales.error);
+
+  expect(
+    await account.reportRenewalFailure(
+      opened.accountId,
+      paymentPort({ failedAt: new Date(Date.now() - 8 * 24 * 60 * 60 * 1000) })
+    )
+  ).toEqual({ ok: true });
+
+  expect(
+    await account.signIn({
+      companyCode: "alpha-vitality",
+      email: "op-sales@example.com",
+      password: "sales123",
+    })
+  ).toMatchObject({ ok: true, userId: sales.userId, access: "full" });
+  expect(
+    await account.addPerson(opened.userId, {
+      name: "Still Ok",
+      email: "still-ok@example.com",
+      password: "sales123",
+      role: "SALES",
+      companyId: opened.companyId,
+    })
+  ).toMatchObject({ ok: true, created: true });
 });

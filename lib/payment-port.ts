@@ -16,7 +16,15 @@ export type SetPackQuantityInput = {
 
 export type SetPackQuantityResult = { ok: true } | { ok: false };
 
+export type RenewalFailureReport =
+  | { ok: true; failedAt: Date }
+  | { ok: false };
+
+export type PaymentSuccessReport = { ok: true } | { ok: false };
+
 export type PaymentPort = {
   chargeFirstPack(input: FirstPackCharge): Promise<PaymentResult>;
   setPackQuantity(input: SetPackQuantityInput): Promise<SetPackQuantityResult>;
+  renewalFailure(subscriptionId: string): Promise<RenewalFailureReport>;
+  paymentSuccess(subscriptionId: string): Promise<PaymentSuccessReport>;
 };
